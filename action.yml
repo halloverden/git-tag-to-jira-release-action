@@ -1,11 +1,23 @@
-name: 'Your name here'
-description: 'Provide a description here'
-author: 'Your name or organization here'
+name: 'git-tag-to-jira-release'
+description: 'Creates a JIRA release based on a git tag'
+author: 'Hallo Verden'
 inputs:
-  milliseconds: # change this
+  jira_host:
     required: true
-    description: 'input description here'
-    default: 'default value if applicable'
+    description: "hostname of your JIRA instance (eg. yourcompany.atlassian.net)"
+  jira_username:
+    required: true
+    description: "Your JIRA email"
+  jira_password:
+    required: true
+    description: "Your JIRA API token"
+  jira_project:
+    required: true
+    description: 'The JIRA project key'
+  jira_protocol:
+    required: true
+    description: "Protocol of your JIRA instance (http/https)"
+    default: 'https'
 runs:
   using: 'node12'
   main: 'dist/index.js'
