@@ -9,8 +9,8 @@ Creates a JIRA release based on a git tag.
 # How it works:
 
 1. Finds the latest tag defined on HEAD
-2. Find all JIRA issue keys in the tag message
-3. Create a release with the tag as name and sets fixVersion on all the issues found to this version
+2. Finds all JIRA issue keys in the tag message
+3. Creates a release with the tag as name and sets fixVersion on all the issues found to this version
 
 # Example action
 
