@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Create JIRA release from git tag
-        uses: halloverden/git-tag-to-jira-release-action@feature/initial-release
+        uses: halloverden/git-tag-to-jira-release-action@v1
         with:
           jira_host: 'yourcompany.atlassian.net'
           jira_username: 'example@example.com'
