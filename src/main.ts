@@ -1,18 +1,38 @@
 import * as core from '@actions/core'
-import {wait} from './wait'
+import * as gitUtils from './git-utils'
+import {Jira} from './jira'
+import JiraApi from 'jira-client'
 
 async function run(): Promise<void> {
   try {
-    const ms: string = core.getInput('milliseconds')
-    core.debug(`Waiting ${ms} milliseconds ...`) // debug is only output if you set the secret `ACTIONS_STEP_DEBUG` to true
+    const tag = await gitUtils.findTag()
+    if (null === tag) {
+      core.debug('No tag found')
+      return
+    }
+    core.debug(`Tag: ${tag}`)
 
-    core.debug(new Date().toTimeString())
-    await wait(parseInt(ms, 10))
-    core.debug(new Date().toTimeString())
+    const tagMessage = await gitUtils.findTagMessage(tag)
+    core.debug(`Tag message: '${tagMessage}'`)
 
-    core.setOutput('time', new Date().toTimeString())
+    const jira = new Jira()
+
+    let issues: JiraApi.JsonResponse[] = []
+    if (null !== tagMessage) {
+      issues = await jira.findIssuesInString(tagMessage)
+    }
+
+    await jira.createVersionWithIssues(
+      core.getInput('jira_project'),
+      tag,
+      issues
+    )
   } catch (error) {
-    if (error instanceof Error) core.setFailed(error.message)
+    if (error instanceof Error) {
+      core.setFailed(error.message)
+    } else {
+      throw error
+    }
   }
 }
 
