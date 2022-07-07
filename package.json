@@ -27,7 +27,7 @@
   "dependencies": {
     "@actions/core": "^1.6.0",
     "@actions/exec": "^1.1.0",
-    "jira-client": "^8.0.0"
+    "jira-client": "^8.1.0"
   },
   "devDependencies": {
     "@types/jira-client": "^7.1.4",
@@ -36,7 +36,7 @@
     "@vercel/ncc": "^0.33.3",
     "eslint": "^7.32.0",
     "eslint-plugin-github": "^4.3.2",
-    "eslint-plugin-jest": "^26.1.1",
+    "eslint-plugin-jest": "^26.5.3",
     "jest": "^27.5.1",
     "js-yaml": "^4.1.0",
     "prettier": "2.5.1",
