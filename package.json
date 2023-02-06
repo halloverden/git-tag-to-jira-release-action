@@ -32,7 +32,7 @@
   "devDependencies": {
     "@types/jira-client": "^7.1.4",
     "@types/node": "^18.7.18",
-    "@typescript-eslint/parser": "^5.37.0",
+    "@typescript-eslint/parser": "^5.51.0",
     "@vercel/ncc": "^0.34.0",
     "eslint": "^8.19.0",
     "eslint-plugin-github": "^4.3.7",
