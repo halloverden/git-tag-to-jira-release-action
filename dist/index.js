@@ -439,13 +439,9 @@ function exportVariable(name, val) {
     process.env[name] = convertedVal;
     const filePath = process.env['GITHUB_ENV'] || '';
     if (filePath) {
-        const delimiter = '_GitHubActionsFileCommandDelimeter_';
-        const commandValue = `${name}<<${delimiter}${os.EOL}${convertedVal}${os.EOL}${delimiter}`;
-        file_command_1.issueCommand('ENV', commandValue);
+        return file_command_1.issueFileCommand('ENV', file_command_1.prepareKeyValueMessage(name, val));
     }
-    else {
-        command_1.issueCommand('set-env', { name }, convertedVal);
-    }
+    command_1.issueCommand('set-env', { name }, convertedVal);
 }
 exports.exportVariable = exportVariable;
 /**
@@ -463,7 +459,7 @@ exports.setSecret = setSecret;
 function addPath(inputPath) {
     const filePath = process.env['GITHUB_PATH'] || '';
     if (filePath) {
-        file_command_1.issueCommand('PATH', inputPath);
+        file_command_1.issueFileCommand('PATH', inputPath);
     }
     else {
         command_1.issueCommand('add-path', {}, inputPath);
@@ -503,7 +499,10 @@ function getMultilineInput(name, options) {
     const inputs = getInput(name, options)
         .split('\n')
         .filter(x => x !== '');
-    return inputs;
+    if (options && options.trimWhitespace === false) {
+        return inputs;
+    }
+    return inputs.map(input => input.trim());
 }
 exports.getMultilineInput = getMultilineInput;
 /**
@@ -536,8 +535,12 @@ exports.getBooleanInput = getBooleanInput;
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function setOutput(name, value) {
+    const filePath = process.env['GITHUB_OUTPUT'] || '';
+    if (filePath) {
+        return file_command_1.issueFileCommand('OUTPUT', file_command_1.prepareKeyValueMessage(name, value));
+    }
     process.stdout.write(os.EOL);
-    command_1.issueCommand('set-output', { name }, value);
+    command_1.issueCommand('set-output', { name }, utils_1.toCommandValue(value));
 }
 exports.setOutput = setOutput;
 /**
@@ -666,7 +669,11 @@ exports.group = group;
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function saveState(name, value) {
-    command_1.issueCommand('save-state', { name }, value);
+    const filePath = process.env['GITHUB_STATE'] || '';
+    if (filePath) {
+        return file_command_1.issueFileCommand('STATE', file_command_1.prepareKeyValueMessage(name, value));
+    }
+    command_1.issueCommand('save-state', { name }, utils_1.toCommandValue(value));
 }
 exports.saveState = saveState;
 /**
@@ -732,13 +739,14 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.issueCommand = void 0;
+exports.prepareKeyValueMessage = exports.issueFileCommand = void 0;
 // We use any as a valid input type
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const fs = __importStar(__nccwpck_require__(7147));
 const os = __importStar(__nccwpck_require__(2037));
+const uuid_1 = __nccwpck_require__(5840);
 const utils_1 = __nccwpck_require__(5278);
-function issueCommand(command, message) {
+function issueFileCommand(command, message) {
     const filePath = process.env[`GITHUB_${command}`];
     if (!filePath) {
         throw new Error(`Unable to find environment variable for file command ${command}`);
@@ -750,7 +758,22 @@ function issueCommand(command, message) {
         encoding: 'utf8'
     });
 }
-exports.issueCommand = issueCommand;
+exports.issueFileCommand = issueFileCommand;
+function prepareKeyValueMessage(key, value) {
+    const delimiter = `ghadelimiter_${uuid_1.v4()}`;
+    const convertedValue = utils_1.toCommandValue(value);
+    // These should realistically never happen, but just in case someone finds a
+    // way to exploit uuid generation let's not allow keys or values that contain
+    // the delimiter.
+    if (key.includes(delimiter)) {
+        throw new Error(`Unexpected input: name should not contain the delimiter "${delimiter}"`);
+    }
+    if (convertedValue.includes(delimiter)) {
+        throw new Error(`Unexpected input: value should not contain the delimiter "${delimiter}"`);
+    }
+    return `${key}<<${delimiter}${os.EOL}${convertedValue}${os.EOL}${delimiter}`;
+}
+exports.prepareKeyValueMessage = prepareKeyValueMessage;
 //# sourceMappingURL=file-command.js.map
 
 /***/ }),
@@ -2708,6 +2731,10 @@ function checkBypass(reqUrl) {
     if (!reqUrl.hostname) {
         return false;
     }
+    const reqHost = reqUrl.hostname;
+    if (isLoopbackAddress(reqHost)) {
+        return true;
+    }
     const noProxy = process.env['no_proxy'] || process.env['NO_PROXY'] || '';
     if (!noProxy) {
         return false;
@@ -2733,13 +2760,24 @@ function checkBypass(reqUrl) {
         .split(',')
         .map(x => x.trim().toUpperCase())
         .filter(x => x)) {
-        if (upperReqHosts.some(x => x === upperNoProxyItem)) {
+        if (upperNoProxyItem === '*' ||
+            upperReqHosts.some(x => x === upperNoProxyItem ||
+                x.endsWith(`.${upperNoProxyItem}`) ||
+                (upperNoProxyItem.startsWith('.') &&
+                    x.endsWith(`${upperNoProxyItem}`)))) {
             return true;
         }
     }
     return false;
 }
 exports.checkBypass = checkBypass;
+function isLoopbackAddress(host) {
+    const hostLower = host.toLowerCase();
+    return (hostLower === 'localhost' ||
+        hostLower.startsWith('127.') ||
+        hostLower.startsWith('[::1]') ||
+        hostLower.startsWith('[0:0:0:0:0:0:0:1]'));
+}
 //# sourceMappingURL=proxy.js.map
 
 /***/ }),
@@ -2779,11 +2817,17 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 };
 var _a;
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getCmdPath = exports.tryGetExecutablePath = exports.isRooted = exports.isDirectory = exports.exists = exports.IS_WINDOWS = exports.unlink = exports.symlink = exports.stat = exports.rmdir = exports.rename = exports.readlink = exports.readdir = exports.mkdir = exports.lstat = exports.copyFile = exports.chmod = void 0;
+exports.getCmdPath = exports.tryGetExecutablePath = exports.isRooted = exports.isDirectory = exports.exists = exports.READONLY = exports.UV_FS_O_EXLOCK = exports.IS_WINDOWS = exports.unlink = exports.symlink = exports.stat = exports.rmdir = exports.rm = exports.rename = exports.readlink = exports.readdir = exports.open = exports.mkdir = exports.lstat = exports.copyFile = exports.chmod = void 0;
 const fs = __importStar(__nccwpck_require__(7147));
 const path = __importStar(__nccwpck_require__(1017));
-_a = fs.promises, exports.chmod = _a.chmod, exports.copyFile = _a.copyFile, exports.lstat = _a.lstat, exports.mkdir = _a.mkdir, exports.readdir = _a.readdir, exports.readlink = _a.readlink, exports.rename = _a.rename, exports.rmdir = _a.rmdir, exports.stat = _a.stat, exports.symlink = _a.symlink, exports.unlink = _a.unlink;
+_a = fs.promises
+// export const {open} = 'fs'
+, exports.chmod = _a.chmod, exports.copyFile = _a.copyFile, exports.lstat = _a.lstat, exports.mkdir = _a.mkdir, exports.open = _a.open, exports.readdir = _a.readdir, exports.readlink = _a.readlink, exports.rename = _a.rename, exports.rm = _a.rm, exports.rmdir = _a.rmdir, exports.stat = _a.stat, exports.symlink = _a.symlink, exports.unlink = _a.unlink;
+// export const {open} = 'fs'
 exports.IS_WINDOWS = process.platform === 'win32';
+// See https://github.com/nodejs/node/blob/d0153aee367422d0858105abec186da4dff0a0c5/deps/uv/include/uv/win.h#L691
+exports.UV_FS_O_EXLOCK = 0x10000000;
+exports.READONLY = fs.constants.O_RDONLY;
 function exists(fsPath) {
     return __awaiter(this, void 0, void 0, function* () {
         try {
@@ -2964,12 +3008,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.findInPath = exports.which = exports.mkdirP = exports.rmRF = exports.mv = exports.cp = void 0;
 const assert_1 = __nccwpck_require__(9491);
-const childProcess = __importStar(__nccwpck_require__(2081));
 const path = __importStar(__nccwpck_require__(1017));
-const util_1 = __nccwpck_require__(3837);
 const ioUtil = __importStar(__nccwpck_require__(1962));
-const exec = util_1.promisify(childProcess.exec);
-const execFile = util_1.promisify(childProcess.execFile);
 /**
  * Copies a file or folder.
  * Based off of shelljs - https://github.com/shelljs/shelljs/blob/9237f66c52e5daa40458f94f9565e18e8132f5a6/src/cp.js
@@ -3050,61 +3090,23 @@ exports.mv = mv;
 function rmRF(inputPath) {
     return __awaiter(this, void 0, void 0, function* () {
         if (ioUtil.IS_WINDOWS) {
-            // Node doesn't provide a delete operation, only an unlink function. This means that if the file is being used by another
-            // program (e.g. antivirus), it won't be deleted. To address this, we shell out the work to rd/del.
             // Check for invalid characters
             // https://docs.microsoft.com/en-us/windows/win32/fileio/naming-a-file
             if (/[*"<>|]/.test(inputPath)) {
                 throw new Error('File path must not contain `*`, `"`, `<`, `>` or `|` on Windows');
             }
-            try {
-                const cmdPath = ioUtil.getCmdPath();
-                if (yield ioUtil.isDirectory(inputPath, true)) {
-                    yield exec(`${cmdPath} /s /c "rd /s /q "%inputPath%""`, {
-                        env: { inputPath }
-                    });
-                }
-                else {
-                    yield exec(`${cmdPath} /s /c "del /f /a "%inputPath%""`, {
-                        env: { inputPath }
-                    });
-                }
-            }
-            catch (err) {
-                // if you try to delete a file that doesn't exist, desired result is achieved
-                // other errors are valid
-                if (err.code !== 'ENOENT')
-                    throw err;
-            }
-            // Shelling out fails to remove a symlink folder with missing source, this unlink catches that
-            try {
-                yield ioUtil.unlink(inputPath);
-            }
-            catch (err) {
-                // if you try to delete a file that doesn't exist, desired result is achieved
-                // other errors are valid
-                if (err.code !== 'ENOENT')
-                    throw err;
-            }
         }
-        else {
-            let isDir = false;
-            try {
-                isDir = yield ioUtil.isDirectory(inputPath);
-            }
-            catch (err) {
-                // if you try to delete a file that doesn't exist, desired result is achieved
-                // other errors are valid
-                if (err.code !== 'ENOENT')
-                    throw err;
-                return;
-            }
-            if (isDir) {
-                yield execFile(`rm`, [`-rf`, `${inputPath}`]);
-            }
-            else {
-                yield ioUtil.unlink(inputPath);
-            }
+        try {
+            // note if path does not exist, error is silent
+            yield ioUtil.rm(inputPath, {
+                force: true,
+                maxRetries: 3,
+                recursive: true,
+                retryDelay: 300
+            });
+        }
+        catch (err) {
+            throw new Error(`File was unable to be removed ${err}`);
         }
     });
 }
@@ -3821,6 +3823,2501 @@ module.exports = function(dst, src) {
 
   return dst;
 };
+
+
+/***/ }),
+
+/***/ 1854:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+/*!
+ * Copyright (c) 2015-2020, Salesforce.com, Inc.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of Salesforce.com nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+const punycode = __nccwpck_require__(9540);
+const urlParse = __nccwpck_require__(5682);
+const pubsuffix = __nccwpck_require__(6991);
+const Store = (__nccwpck_require__(7009)/* .Store */ .y);
+const MemoryCookieStore = (__nccwpck_require__(4536)/* .MemoryCookieStore */ .m);
+const pathMatch = (__nccwpck_require__(6021)/* .pathMatch */ .U);
+const validators = __nccwpck_require__(3265);
+const VERSION = __nccwpck_require__(610);
+const { fromCallback } = __nccwpck_require__(9046);
+const { getCustomInspectSymbol } = __nccwpck_require__(1293);
+
+// From RFC6265 S4.1.1
+// note that it excludes \x3B ";"
+const COOKIE_OCTETS = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/;
+
+const CONTROL_CHARS = /[\x00-\x1F]/;
+
+// From Chromium // '\r', '\n' and '\0' should be treated as a terminator in
+// the "relaxed" mode, see:
+// https://github.com/ChromiumWebApps/chromium/blob/b3d3b4da8bb94c1b2e061600df106d590fda3620/net/cookies/parsed_cookie.cc#L60
+const TERMINATORS = ["\n", "\r", "\0"];
+
+// RFC6265 S4.1.1 defines path value as 'any CHAR except CTLs or ";"'
+// Note ';' is \x3B
+const PATH_VALUE = /[\x20-\x3A\x3C-\x7E]+/;
+
+// date-time parsing constants (RFC6265 S5.1.1)
+
+const DATE_DELIM = /[\x09\x20-\x2F\x3B-\x40\x5B-\x60\x7B-\x7E]/;
+
+const MONTH_TO_NUM = {
+  jan: 0,
+  feb: 1,
+  mar: 2,
+  apr: 3,
+  may: 4,
+  jun: 5,
+  jul: 6,
+  aug: 7,
+  sep: 8,
+  oct: 9,
+  nov: 10,
+  dec: 11
+};
+
+const MAX_TIME = 2147483647000; // 31-bit max
+const MIN_TIME = 0; // 31-bit min
+const SAME_SITE_CONTEXT_VAL_ERR =
+  'Invalid sameSiteContext option for getCookies(); expected one of "strict", "lax", or "none"';
+
+function checkSameSiteContext(value) {
+  validators.validate(validators.isNonEmptyString(value), value);
+  const context = String(value).toLowerCase();
+  if (context === "none" || context === "lax" || context === "strict") {
+    return context;
+  } else {
+    return null;
+  }
+}
+
+const PrefixSecurityEnum = Object.freeze({
+  SILENT: "silent",
+  STRICT: "strict",
+  DISABLED: "unsafe-disabled"
+});
+
+// Dumped from ip-regex@4.0.0, with the following changes:
+// * all capturing groups converted to non-capturing -- "(?:)"
+// * support for IPv6 Scoped Literal ("%eth1") removed
+// * lowercase hexadecimal only
+const IP_REGEX_LOWERCASE = /(?:^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)){3}$)|(?:^(?:(?:[a-f\d]{1,4}:){7}(?:[a-f\d]{1,4}|:)|(?:[a-f\d]{1,4}:){6}(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)){3}|:[a-f\d]{1,4}|:)|(?:[a-f\d]{1,4}:){5}(?::(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)){3}|(?::[a-f\d]{1,4}){1,2}|:)|(?:[a-f\d]{1,4}:){4}(?:(?::[a-f\d]{1,4}){0,1}:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)){3}|(?::[a-f\d]{1,4}){1,3}|:)|(?:[a-f\d]{1,4}:){3}(?:(?::[a-f\d]{1,4}){0,2}:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)){3}|(?::[a-f\d]{1,4}){1,4}|:)|(?:[a-f\d]{1,4}:){2}(?:(?::[a-f\d]{1,4}){0,3}:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)){3}|(?::[a-f\d]{1,4}){1,5}|:)|(?:[a-f\d]{1,4}:){1}(?:(?::[a-f\d]{1,4}){0,4}:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)){3}|(?::[a-f\d]{1,4}){1,6}|:)|(?::(?:(?::[a-f\d]{1,4}){0,5}:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d|\d)){3}|(?::[a-f\d]{1,4}){1,7}|:)))$)/;
+const IP_V6_REGEX = `
+\\[?(?:
+(?:[a-fA-F\\d]{1,4}:){7}(?:[a-fA-F\\d]{1,4}|:)|
+(?:[a-fA-F\\d]{1,4}:){6}(?:(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)){3}|:[a-fA-F\\d]{1,4}|:)|
+(?:[a-fA-F\\d]{1,4}:){5}(?::(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)){3}|(?::[a-fA-F\\d]{1,4}){1,2}|:)|
+(?:[a-fA-F\\d]{1,4}:){4}(?:(?::[a-fA-F\\d]{1,4}){0,1}:(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)){3}|(?::[a-fA-F\\d]{1,4}){1,3}|:)|
+(?:[a-fA-F\\d]{1,4}:){3}(?:(?::[a-fA-F\\d]{1,4}){0,2}:(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)){3}|(?::[a-fA-F\\d]{1,4}){1,4}|:)|
+(?:[a-fA-F\\d]{1,4}:){2}(?:(?::[a-fA-F\\d]{1,4}){0,3}:(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)){3}|(?::[a-fA-F\\d]{1,4}){1,5}|:)|
+(?:[a-fA-F\\d]{1,4}:){1}(?:(?::[a-fA-F\\d]{1,4}){0,4}:(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)){3}|(?::[a-fA-F\\d]{1,4}){1,6}|:)|
+(?::(?:(?::[a-fA-F\\d]{1,4}){0,5}:(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]\\d|\\d)){3}|(?::[a-fA-F\\d]{1,4}){1,7}|:))
+)(?:%[0-9a-zA-Z]{1,})?\\]?
+`
+  .replace(/\s*\/\/.*$/gm, "")
+  .replace(/\n/g, "")
+  .trim();
+const IP_V6_REGEX_OBJECT = new RegExp(`^${IP_V6_REGEX}$`);
+
+/*
+ * Parses a Natural number (i.e., non-negative integer) with either the
+ *    <min>*<max>DIGIT ( non-digit *OCTET )
+ * or
+ *    <min>*<max>DIGIT
+ * grammar (RFC6265 S5.1.1).
+ *
+ * The "trailingOK" boolean controls if the grammar accepts a
+ * "( non-digit *OCTET )" trailer.
+ */
+function parseDigits(token, minDigits, maxDigits, trailingOK) {
+  let count = 0;
+  while (count < token.length) {
+    const c = token.charCodeAt(count);
+    // "non-digit = %x00-2F / %x3A-FF"
+    if (c <= 0x2f || c >= 0x3a) {
+      break;
+    }
+    count++;
+  }
+
+  // constrain to a minimum and maximum number of digits.
+  if (count < minDigits || count > maxDigits) {
+    return null;
+  }
+
+  if (!trailingOK && count != token.length) {
+    return null;
+  }
+
+  return parseInt(token.substr(0, count), 10);
+}
+
+function parseTime(token) {
+  const parts = token.split(":");
+  const result = [0, 0, 0];
+
+  /* RF6256 S5.1.1:
+   *      time            = hms-time ( non-digit *OCTET )
+   *      hms-time        = time-field ":" time-field ":" time-field
+   *      time-field      = 1*2DIGIT
+   */
+
+  if (parts.length !== 3) {
+    return null;
+  }
+
+  for (let i = 0; i < 3; i++) {
+    // "time-field" must be strictly "1*2DIGIT", HOWEVER, "hms-time" can be
+    // followed by "( non-digit *OCTET )" so therefore the last time-field can
+    // have a trailer
+    const trailingOK = i == 2;
+    const num = parseDigits(parts[i], 1, 2, trailingOK);
+    if (num === null) {
+      return null;
+    }
+    result[i] = num;
+  }
+
+  return result;
+}
+
+function parseMonth(token) {
+  token = String(token)
+    .substr(0, 3)
+    .toLowerCase();
+  const num = MONTH_TO_NUM[token];
+  return num >= 0 ? num : null;
+}
+
+/*
+ * RFC6265 S5.1.1 date parser (see RFC for full grammar)
+ */
+function parseDate(str) {
+  if (!str) {
+    return;
+  }
+
+  /* RFC6265 S5.1.1:
+   * 2. Process each date-token sequentially in the order the date-tokens
+   * appear in the cookie-date
+   */
+  const tokens = str.split(DATE_DELIM);
+  if (!tokens) {
+    return;
+  }
+
+  let hour = null;
+  let minute = null;
+  let second = null;
+  let dayOfMonth = null;
+  let month = null;
+  let year = null;
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i].trim();
+    if (!token.length) {
+      continue;
+    }
+
+    let result;
+
+    /* 2.1. If the found-time flag is not set and the token matches the time
+     * production, set the found-time flag and set the hour- value,
+     * minute-value, and second-value to the numbers denoted by the digits in
+     * the date-token, respectively.  Skip the remaining sub-steps and continue
+     * to the next date-token.
+     */
+    if (second === null) {
+      result = parseTime(token);
+      if (result) {
+        hour = result[0];
+        minute = result[1];
+        second = result[2];
+        continue;
+      }
+    }
+
+    /* 2.2. If the found-day-of-month flag is not set and the date-token matches
+     * the day-of-month production, set the found-day-of- month flag and set
+     * the day-of-month-value to the number denoted by the date-token.  Skip
+     * the remaining sub-steps and continue to the next date-token.
+     */
+    if (dayOfMonth === null) {
+      // "day-of-month = 1*2DIGIT ( non-digit *OCTET )"
+      result = parseDigits(token, 1, 2, true);
+      if (result !== null) {
+        dayOfMonth = result;
+        continue;
+      }
+    }
+
+    /* 2.3. If the found-month flag is not set and the date-token matches the
+     * month production, set the found-month flag and set the month-value to
+     * the month denoted by the date-token.  Skip the remaining sub-steps and
+     * continue to the next date-token.
+     */
+    if (month === null) {
+      result = parseMonth(token);
+      if (result !== null) {
+        month = result;
+        continue;
+      }
+    }
+
+    /* 2.4. If the found-year flag is not set and the date-token matches the
+     * year production, set the found-year flag and set the year-value to the
+     * number denoted by the date-token.  Skip the remaining sub-steps and
+     * continue to the next date-token.
+     */
+    if (year === null) {
+      // "year = 2*4DIGIT ( non-digit *OCTET )"
+      result = parseDigits(token, 2, 4, true);
+      if (result !== null) {
+        year = result;
+        /* From S5.1.1:
+         * 3.  If the year-value is greater than or equal to 70 and less
+         * than or equal to 99, increment the year-value by 1900.
+         * 4.  If the year-value is greater than or equal to 0 and less
+         * than or equal to 69, increment the year-value by 2000.
+         */
+        if (year >= 70 && year <= 99) {
+          year += 1900;
+        } else if (year >= 0 && year <= 69) {
+          year += 2000;
+        }
+      }
+    }
+  }
+
+  /* RFC 6265 S5.1.1
+   * "5. Abort these steps and fail to parse the cookie-date if:
+   *     *  at least one of the found-day-of-month, found-month, found-
+   *        year, or found-time flags is not set,
+   *     *  the day-of-month-value is less than 1 or greater than 31,
+   *     *  the year-value is less than 1601,
+   *     *  the hour-value is greater than 23,
+   *     *  the minute-value is greater than 59, or
+   *     *  the second-value is greater than 59.
+   *     (Note that leap seconds cannot be represented in this syntax.)"
+   *
+   * So, in order as above:
+   */
+  if (
+    dayOfMonth === null ||
+    month === null ||
+    year === null ||
+    second === null ||
+    dayOfMonth < 1 ||
+    dayOfMonth > 31 ||
+    year < 1601 ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59
+  ) {
+    return;
+  }
+
+  return new Date(Date.UTC(year, month, dayOfMonth, hour, minute, second));
+}
+
+function formatDate(date) {
+  validators.validate(validators.isDate(date), date);
+  return date.toUTCString();
+}
+
+// S5.1.2 Canonicalized Host Names
+function canonicalDomain(str) {
+  if (str == null) {
+    return null;
+  }
+  str = str.trim().replace(/^\./, ""); // S4.1.2.3 & S5.2.3: ignore leading .
+
+  if (IP_V6_REGEX_OBJECT.test(str)) {
+    str = str.replace("[", "").replace("]", "");
+  }
+
+  // convert to IDN if any non-ASCII characters
+  if (punycode && /[^\u0001-\u007f]/.test(str)) {
+    str = punycode.toASCII(str);
+  }
+
+  return str.toLowerCase();
+}
+
+// S5.1.3 Domain Matching
+function domainMatch(str, domStr, canonicalize) {
+  if (str == null || domStr == null) {
+    return null;
+  }
+  if (canonicalize !== false) {
+    str = canonicalDomain(str);
+    domStr = canonicalDomain(domStr);
+  }
+
+  /*
+   * S5.1.3:
+   * "A string domain-matches a given domain string if at least one of the
+   * following conditions hold:"
+   *
+   * " o The domain string and the string are identical. (Note that both the
+   * domain string and the string will have been canonicalized to lower case at
+   * this point)"
+   */
+  if (str == domStr) {
+    return true;
+  }
+
+  /* " o All of the following [three] conditions hold:" */
+
+  /* "* The domain string is a suffix of the string" */
+  const idx = str.lastIndexOf(domStr);
+  if (idx <= 0) {
+    return false; // it's a non-match (-1) or prefix (0)
+  }
+
+  // next, check it's a proper suffix
+  // e.g., "a.b.c".indexOf("b.c") === 2
+  // 5 === 3+2
+  if (str.length !== domStr.length + idx) {
+    return false; // it's not a suffix
+  }
+
+  /* "  * The last character of the string that is not included in the
+   * domain string is a %x2E (".") character." */
+  if (str.substr(idx - 1, 1) !== ".") {
+    return false; // doesn't align on "."
+  }
+
+  /* "  * The string is a host name (i.e., not an IP address)." */
+  if (IP_REGEX_LOWERCASE.test(str)) {
+    return false; // it's an IP address
+  }
+
+  return true;
+}
+
+// RFC6265 S5.1.4 Paths and Path-Match
+
+/*
+ * "The user agent MUST use an algorithm equivalent to the following algorithm
+ * to compute the default-path of a cookie:"
+ *
+ * Assumption: the path (and not query part or absolute uri) is passed in.
+ */
+function defaultPath(path) {
+  // "2. If the uri-path is empty or if the first character of the uri-path is not
+  // a %x2F ("/") character, output %x2F ("/") and skip the remaining steps.
+  if (!path || path.substr(0, 1) !== "/") {
+    return "/";
+  }
+
+  // "3. If the uri-path contains no more than one %x2F ("/") character, output
+  // %x2F ("/") and skip the remaining step."
+  if (path === "/") {
+    return path;
+  }
+
+  const rightSlash = path.lastIndexOf("/");
+  if (rightSlash === 0) {
+    return "/";
+  }
+
+  // "4. Output the characters of the uri-path from the first character up to,
+  // but not including, the right-most %x2F ("/")."
+  return path.slice(0, rightSlash);
+}
+
+function trimTerminator(str) {
+  if (validators.isEmptyString(str)) return str;
+  for (let t = 0; t < TERMINATORS.length; t++) {
+    const terminatorIdx = str.indexOf(TERMINATORS[t]);
+    if (terminatorIdx !== -1) {
+      str = str.substr(0, terminatorIdx);
+    }
+  }
+
+  return str;
+}
+
+function parseCookiePair(cookiePair, looseMode) {
+  cookiePair = trimTerminator(cookiePair);
+  validators.validate(validators.isString(cookiePair), cookiePair);
+
+  let firstEq = cookiePair.indexOf("=");
+  if (looseMode) {
+    if (firstEq === 0) {
+      // '=' is immediately at start
+      cookiePair = cookiePair.substr(1);
+      firstEq = cookiePair.indexOf("="); // might still need to split on '='
+    }
+  } else {
+    // non-loose mode
+    if (firstEq <= 0) {
+      // no '=' or is at start
+      return; // needs to have non-empty "cookie-name"
+    }
+  }
+
+  let cookieName, cookieValue;
+  if (firstEq <= 0) {
+    cookieName = "";
+    cookieValue = cookiePair.trim();
+  } else {
+    cookieName = cookiePair.substr(0, firstEq).trim();
+    cookieValue = cookiePair.substr(firstEq + 1).trim();
+  }
+
+  if (CONTROL_CHARS.test(cookieName) || CONTROL_CHARS.test(cookieValue)) {
+    return;
+  }
+
+  const c = new Cookie();
+  c.key = cookieName;
+  c.value = cookieValue;
+  return c;
+}
+
+function parse(str, options) {
+  if (!options || typeof options !== "object") {
+    options = {};
+  }
+
+  if (validators.isEmptyString(str) || !validators.isString(str)) {
+    return null;
+  }
+
+  str = str.trim();
+
+  // We use a regex to parse the "name-value-pair" part of S5.2
+  const firstSemi = str.indexOf(";"); // S5.2 step 1
+  const cookiePair = firstSemi === -1 ? str : str.substr(0, firstSemi);
+  const c = parseCookiePair(cookiePair, !!options.loose);
+  if (!c) {
+    return;
+  }
+
+  if (firstSemi === -1) {
+    return c;
+  }
+
+  // S5.2.3 "unparsed-attributes consist of the remainder of the set-cookie-string
+  // (including the %x3B (";") in question)." plus later on in the same section
+  // "discard the first ";" and trim".
+  const unparsed = str.slice(firstSemi + 1).trim();
+
+  // "If the unparsed-attributes string is empty, skip the rest of these
+  // steps."
+  if (unparsed.length === 0) {
+    return c;
+  }
+
+  /*
+   * S5.2 says that when looping over the items "[p]rocess the attribute-name
+   * and attribute-value according to the requirements in the following
+   * subsections" for every item.  Plus, for many of the individual attributes
+   * in S5.3 it says to use the "attribute-value of the last attribute in the
+   * cookie-attribute-list".  Therefore, in this implementation, we overwrite
+   * the previous value.
+   */
+  const cookie_avs = unparsed.split(";");
+  while (cookie_avs.length) {
+    const av = cookie_avs.shift().trim();
+    if (av.length === 0) {
+      // happens if ";;" appears
+      continue;
+    }
+    const av_sep = av.indexOf("=");
+    let av_key, av_value;
+
+    if (av_sep === -1) {
+      av_key = av;
+      av_value = null;
+    } else {
+      av_key = av.substr(0, av_sep);
+      av_value = av.substr(av_sep + 1);
+    }
+
+    av_key = av_key.trim().toLowerCase();
+
+    if (av_value) {
+      av_value = av_value.trim();
+    }
+
+    switch (av_key) {
+      case "expires": // S5.2.1
+        if (av_value) {
+          const exp = parseDate(av_value);
+          // "If the attribute-value failed to parse as a cookie date, ignore the
+          // cookie-av."
+          if (exp) {
+            // over and underflow not realistically a concern: V8's getTime() seems to
+            // store something larger than a 32-bit time_t (even with 32-bit node)
+            c.expires = exp;
+          }
+        }
+        break;
+
+      case "max-age": // S5.2.2
+        if (av_value) {
+          // "If the first character of the attribute-value is not a DIGIT or a "-"
+          // character ...[or]... If the remainder of attribute-value contains a
+          // non-DIGIT character, ignore the cookie-av."
+          if (/^-?[0-9]+$/.test(av_value)) {
+            const delta = parseInt(av_value, 10);
+            // "If delta-seconds is less than or equal to zero (0), let expiry-time
+            // be the earliest representable date and time."
+            c.setMaxAge(delta);
+          }
+        }
+        break;
+
+      case "domain": // S5.2.3
+        // "If the attribute-value is empty, the behavior is undefined.  However,
+        // the user agent SHOULD ignore the cookie-av entirely."
+        if (av_value) {
+          // S5.2.3 "Let cookie-domain be the attribute-value without the leading %x2E
+          // (".") character."
+          const domain = av_value.trim().replace(/^\./, "");
+          if (domain) {
+            // "Convert the cookie-domain to lower case."
+            c.domain = domain.toLowerCase();
+          }
+        }
+        break;
+
+      case "path": // S5.2.4
+        /*
+         * "If the attribute-value is empty or if the first character of the
+         * attribute-value is not %x2F ("/"):
+         *   Let cookie-path be the default-path.
+         * Otherwise:
+         *   Let cookie-path be the attribute-value."
+         *
+         * We'll represent the default-path as null since it depends on the
+         * context of the parsing.
+         */
+        c.path = av_value && av_value[0] === "/" ? av_value : null;
+        break;
+
+      case "secure": // S5.2.5
+        /*
+         * "If the attribute-name case-insensitively matches the string "Secure",
+         * the user agent MUST append an attribute to the cookie-attribute-list
+         * with an attribute-name of Secure and an empty attribute-value."
+         */
+        c.secure = true;
+        break;
+
+      case "httponly": // S5.2.6 -- effectively the same as 'secure'
+        c.httpOnly = true;
+        break;
+
+      case "samesite": // RFC6265bis-02 S5.3.7
+        const enforcement = av_value ? av_value.toLowerCase() : "";
+        switch (enforcement) {
+          case "strict":
+            c.sameSite = "strict";
+            break;
+          case "lax":
+            c.sameSite = "lax";
+            break;
+          case "none":
+            c.sameSite = "none";
+            break;
+          default:
+            c.sameSite = undefined;
+            break;
+        }
+        break;
+
+      default:
+        c.extensions = c.extensions || [];
+        c.extensions.push(av);
+        break;
+    }
+  }
+
+  return c;
+}
+
+/**
+ *  If the cookie-name begins with a case-sensitive match for the
+ *  string "__Secure-", abort these steps and ignore the cookie
+ *  entirely unless the cookie's secure-only-flag is true.
+ * @param cookie
+ * @returns boolean
+ */
+function isSecurePrefixConditionMet(cookie) {
+  validators.validate(validators.isObject(cookie), cookie);
+  return !cookie.key.startsWith("__Secure-") || cookie.secure;
+}
+
+/**
+ *  If the cookie-name begins with a case-sensitive match for the
+ *  string "__Host-", abort these steps and ignore the cookie
+ *  entirely unless the cookie meets all the following criteria:
+ *    1.  The cookie's secure-only-flag is true.
+ *    2.  The cookie's host-only-flag is true.
+ *    3.  The cookie-attribute-list contains an attribute with an
+ *        attribute-name of "Path", and the cookie's path is "/".
+ * @param cookie
+ * @returns boolean
+ */
+function isHostPrefixConditionMet(cookie) {
+  validators.validate(validators.isObject(cookie));
+  return (
+    !cookie.key.startsWith("__Host-") ||
+    (cookie.secure &&
+      cookie.hostOnly &&
+      cookie.path != null &&
+      cookie.path === "/")
+  );
+}
+
+// avoid the V8 deoptimization monster!
+function jsonParse(str) {
+  let obj;
+  try {
+    obj = JSON.parse(str);
+  } catch (e) {
+    return e;
+  }
+  return obj;
+}
+
+function fromJSON(str) {
+  if (!str || validators.isEmptyString(str)) {
+    return null;
+  }
+
+  let obj;
+  if (typeof str === "string") {
+    obj = jsonParse(str);
+    if (obj instanceof Error) {
+      return null;
+    }
+  } else {
+    // assume it's an Object
+    obj = str;
+  }
+
+  const c = new Cookie();
+  for (let i = 0; i < Cookie.serializableProperties.length; i++) {
+    const prop = Cookie.serializableProperties[i];
+    if (obj[prop] === undefined || obj[prop] === cookieDefaults[prop]) {
+      continue; // leave as prototype default
+    }
+
+    if (prop === "expires" || prop === "creation" || prop === "lastAccessed") {
+      if (obj[prop] === null) {
+        c[prop] = null;
+      } else {
+        c[prop] = obj[prop] == "Infinity" ? "Infinity" : new Date(obj[prop]);
+      }
+    } else {
+      c[prop] = obj[prop];
+    }
+  }
+
+  return c;
+}
+
+/* Section 5.4 part 2:
+ * "*  Cookies with longer paths are listed before cookies with
+ *     shorter paths.
+ *
+ *  *  Among cookies that have equal-length path fields, cookies with
+ *     earlier creation-times are listed before cookies with later
+ *     creation-times."
+ */
+
+function cookieCompare(a, b) {
+  validators.validate(validators.isObject(a), a);
+  validators.validate(validators.isObject(b), b);
+  let cmp = 0;
+
+  // descending for length: b CMP a
+  const aPathLen = a.path ? a.path.length : 0;
+  const bPathLen = b.path ? b.path.length : 0;
+  cmp = bPathLen - aPathLen;
+  if (cmp !== 0) {
+    return cmp;
+  }
+
+  // ascending for time: a CMP b
+  const aTime = a.creation ? a.creation.getTime() : MAX_TIME;
+  const bTime = b.creation ? b.creation.getTime() : MAX_TIME;
+  cmp = aTime - bTime;
+  if (cmp !== 0) {
+    return cmp;
+  }
+
+  // break ties for the same millisecond (precision of JavaScript's clock)
+  cmp = a.creationIndex - b.creationIndex;
+
+  return cmp;
+}
+
+// Gives the permutation of all possible pathMatch()es of a given path. The
+// array is in longest-to-shortest order.  Handy for indexing.
+function permutePath(path) {
+  validators.validate(validators.isString(path));
+  if (path === "/") {
+    return ["/"];
+  }
+  const permutations = [path];
+  while (path.length > 1) {
+    const lindex = path.lastIndexOf("/");
+    if (lindex === 0) {
+      break;
+    }
+    path = path.substr(0, lindex);
+    permutations.push(path);
+  }
+  permutations.push("/");
+  return permutations;
+}
+
+function getCookieContext(url) {
+  if (url instanceof Object) {
+    return url;
+  }
+  // NOTE: decodeURI will throw on malformed URIs (see GH-32).
+  // Therefore, we will just skip decoding for such URIs.
+  try {
+    url = decodeURI(url);
+  } catch (err) {
+    // Silently swallow error
+  }
+
+  return urlParse(url);
+}
+
+const cookieDefaults = {
+  // the order in which the RFC has them:
+  key: "",
+  value: "",
+  expires: "Infinity",
+  maxAge: null,
+  domain: null,
+  path: null,
+  secure: false,
+  httpOnly: false,
+  extensions: null,
+  // set by the CookieJar:
+  hostOnly: null,
+  pathIsDefault: null,
+  creation: null,
+  lastAccessed: null,
+  sameSite: undefined
+};
+
+class Cookie {
+  constructor(options = {}) {
+    const customInspectSymbol = getCustomInspectSymbol();
+    if (customInspectSymbol) {
+      this[customInspectSymbol] = this.inspect;
+    }
+
+    Object.assign(this, cookieDefaults, options);
+    this.creation = this.creation || new Date();
+
+    // used to break creation ties in cookieCompare():
+    Object.defineProperty(this, "creationIndex", {
+      configurable: false,
+      enumerable: false, // important for assert.deepEqual checks
+      writable: true,
+      value: ++Cookie.cookiesCreated
+    });
+  }
+
+  inspect() {
+    const now = Date.now();
+    const hostOnly = this.hostOnly != null ? this.hostOnly : "?";
+    const createAge = this.creation
+      ? `${now - this.creation.getTime()}ms`
+      : "?";
+    const accessAge = this.lastAccessed
+      ? `${now - this.lastAccessed.getTime()}ms`
+      : "?";
+    return `Cookie="${this.toString()}; hostOnly=${hostOnly}; aAge=${accessAge}; cAge=${createAge}"`;
+  }
+
+  toJSON() {
+    const obj = {};
+
+    for (const prop of Cookie.serializableProperties) {
+      if (this[prop] === cookieDefaults[prop]) {
+        continue; // leave as prototype default
+      }
+
+      if (
+        prop === "expires" ||
+        prop === "creation" ||
+        prop === "lastAccessed"
+      ) {
+        if (this[prop] === null) {
+          obj[prop] = null;
+        } else {
+          obj[prop] =
+            this[prop] == "Infinity" // intentionally not ===
+              ? "Infinity"
+              : this[prop].toISOString();
+        }
+      } else if (prop === "maxAge") {
+        if (this[prop] !== null) {
+          // again, intentionally not ===
+          obj[prop] =
+            this[prop] == Infinity || this[prop] == -Infinity
+              ? this[prop].toString()
+              : this[prop];
+        }
+      } else {
+        if (this[prop] !== cookieDefaults[prop]) {
+          obj[prop] = this[prop];
+        }
+      }
+    }
+
+    return obj;
+  }
+
+  clone() {
+    return fromJSON(this.toJSON());
+  }
+
+  validate() {
+    if (!COOKIE_OCTETS.test(this.value)) {
+      return false;
+    }
+    if (
+      this.expires != Infinity &&
+      !(this.expires instanceof Date) &&
+      !parseDate(this.expires)
+    ) {
+      return false;
+    }
+    if (this.maxAge != null && this.maxAge <= 0) {
+      return false; // "Max-Age=" non-zero-digit *DIGIT
+    }
+    if (this.path != null && !PATH_VALUE.test(this.path)) {
+      return false;
+    }
+
+    const cdomain = this.cdomain();
+    if (cdomain) {
+      if (cdomain.match(/\.$/)) {
+        return false; // S4.1.2.3 suggests that this is bad. domainMatch() tests confirm this
+      }
+      const suffix = pubsuffix.getPublicSuffix(cdomain);
+      if (suffix == null) {
+        // it's a public suffix
+        return false;
+      }
+    }
+    return true;
+  }
+
+  setExpires(exp) {
+    if (exp instanceof Date) {
+      this.expires = exp;
+    } else {
+      this.expires = parseDate(exp) || "Infinity";
+    }
+  }
+
+  setMaxAge(age) {
+    if (age === Infinity || age === -Infinity) {
+      this.maxAge = age.toString(); // so JSON.stringify() works
+    } else {
+      this.maxAge = age;
+    }
+  }
+
+  cookieString() {
+    let val = this.value;
+    if (val == null) {
+      val = "";
+    }
+    if (this.key === "") {
+      return val;
+    }
+    return `${this.key}=${val}`;
+  }
+
+  // gives Set-Cookie header format
+  toString() {
+    let str = this.cookieString();
+
+    if (this.expires != Infinity) {
+      if (this.expires instanceof Date) {
+        str += `; Expires=${formatDate(this.expires)}`;
+      } else {
+        str += `; Expires=${this.expires}`;
+      }
+    }
+
+    if (this.maxAge != null && this.maxAge != Infinity) {
+      str += `; Max-Age=${this.maxAge}`;
+    }
+
+    if (this.domain && !this.hostOnly) {
+      str += `; Domain=${this.domain}`;
+    }
+    if (this.path) {
+      str += `; Path=${this.path}`;
+    }
+
+    if (this.secure) {
+      str += "; Secure";
+    }
+    if (this.httpOnly) {
+      str += "; HttpOnly";
+    }
+    if (this.sameSite && this.sameSite !== "none") {
+      const ssCanon = Cookie.sameSiteCanonical[this.sameSite.toLowerCase()];
+      str += `; SameSite=${ssCanon ? ssCanon : this.sameSite}`;
+    }
+    if (this.extensions) {
+      this.extensions.forEach(ext => {
+        str += `; ${ext}`;
+      });
+    }
+
+    return str;
+  }
+
+  // TTL() partially replaces the "expiry-time" parts of S5.3 step 3 (setCookie()
+  // elsewhere)
+  // S5.3 says to give the "latest representable date" for which we use Infinity
+  // For "expired" we use 0
+  TTL(now) {
+    /* RFC6265 S4.1.2.2 If a cookie has both the Max-Age and the Expires
+     * attribute, the Max-Age attribute has precedence and controls the
+     * expiration date of the cookie.
+     * (Concurs with S5.3 step 3)
+     */
+    if (this.maxAge != null) {
+      return this.maxAge <= 0 ? 0 : this.maxAge * 1000;
+    }
+
+    let expires = this.expires;
+    if (expires != Infinity) {
+      if (!(expires instanceof Date)) {
+        expires = parseDate(expires) || Infinity;
+      }
+
+      if (expires == Infinity) {
+        return Infinity;
+      }
+
+      return expires.getTime() - (now || Date.now());
+    }
+
+    return Infinity;
+  }
+
+  // expiryTime() replaces the "expiry-time" parts of S5.3 step 3 (setCookie()
+  // elsewhere)
+  expiryTime(now) {
+    if (this.maxAge != null) {
+      const relativeTo = now || this.creation || new Date();
+      const age = this.maxAge <= 0 ? -Infinity : this.maxAge * 1000;
+      return relativeTo.getTime() + age;
+    }
+
+    if (this.expires == Infinity) {
+      return Infinity;
+    }
+    return this.expires.getTime();
+  }
+
+  // expiryDate() replaces the "expiry-time" parts of S5.3 step 3 (setCookie()
+  // elsewhere), except it returns a Date
+  expiryDate(now) {
+    const millisec = this.expiryTime(now);
+    if (millisec == Infinity) {
+      return new Date(MAX_TIME);
+    } else if (millisec == -Infinity) {
+      return new Date(MIN_TIME);
+    } else {
+      return new Date(millisec);
+    }
+  }
+
+  // This replaces the "persistent-flag" parts of S5.3 step 3
+  isPersistent() {
+    return this.maxAge != null || this.expires != Infinity;
+  }
+
+  // Mostly S5.1.2 and S5.2.3:
+  canonicalizedDomain() {
+    if (this.domain == null) {
+      return null;
+    }
+    return canonicalDomain(this.domain);
+  }
+
+  cdomain() {
+    return this.canonicalizedDomain();
+  }
+}
+
+Cookie.cookiesCreated = 0;
+Cookie.parse = parse;
+Cookie.fromJSON = fromJSON;
+Cookie.serializableProperties = Object.keys(cookieDefaults);
+Cookie.sameSiteLevel = {
+  strict: 3,
+  lax: 2,
+  none: 1
+};
+
+Cookie.sameSiteCanonical = {
+  strict: "Strict",
+  lax: "Lax"
+};
+
+function getNormalizedPrefixSecurity(prefixSecurity) {
+  if (prefixSecurity != null) {
+    const normalizedPrefixSecurity = prefixSecurity.toLowerCase();
+    /* The three supported options */
+    switch (normalizedPrefixSecurity) {
+      case PrefixSecurityEnum.STRICT:
+      case PrefixSecurityEnum.SILENT:
+      case PrefixSecurityEnum.DISABLED:
+        return normalizedPrefixSecurity;
+    }
+  }
+  /* Default is SILENT */
+  return PrefixSecurityEnum.SILENT;
+}
+
+class CookieJar {
+  constructor(store, options = { rejectPublicSuffixes: true }) {
+    if (typeof options === "boolean") {
+      options = { rejectPublicSuffixes: options };
+    }
+    validators.validate(validators.isObject(options), options);
+    this.rejectPublicSuffixes = options.rejectPublicSuffixes;
+    this.enableLooseMode = !!options.looseMode;
+    this.allowSpecialUseDomain =
+      typeof options.allowSpecialUseDomain === "boolean"
+        ? options.allowSpecialUseDomain
+        : true;
+    this.store = store || new MemoryCookieStore();
+    this.prefixSecurity = getNormalizedPrefixSecurity(options.prefixSecurity);
+    this._cloneSync = syncWrap("clone");
+    this._importCookiesSync = syncWrap("_importCookies");
+    this.getCookiesSync = syncWrap("getCookies");
+    this.getCookieStringSync = syncWrap("getCookieString");
+    this.getSetCookieStringsSync = syncWrap("getSetCookieStrings");
+    this.removeAllCookiesSync = syncWrap("removeAllCookies");
+    this.setCookieSync = syncWrap("setCookie");
+    this.serializeSync = syncWrap("serialize");
+  }
+
+  setCookie(cookie, url, options, cb) {
+    validators.validate(validators.isUrlStringOrObject(url), cb, options);
+
+    let err;
+
+    if (validators.isFunction(url)) {
+      cb = url;
+      return cb(new Error("No URL was specified"));
+    }
+
+    const context = getCookieContext(url);
+    if (validators.isFunction(options)) {
+      cb = options;
+      options = {};
+    }
+
+    validators.validate(validators.isFunction(cb), cb);
+
+    if (
+      !validators.isNonEmptyString(cookie) &&
+      !validators.isObject(cookie) &&
+      cookie instanceof String &&
+      cookie.length == 0
+    ) {
+      return cb(null);
+    }
+
+    const host = canonicalDomain(context.hostname);
+    const loose = options.loose || this.enableLooseMode;
+
+    let sameSiteContext = null;
+    if (options.sameSiteContext) {
+      sameSiteContext = checkSameSiteContext(options.sameSiteContext);
+      if (!sameSiteContext) {
+        return cb(new Error(SAME_SITE_CONTEXT_VAL_ERR));
+      }
+    }
+
+    // S5.3 step 1
+    if (typeof cookie === "string" || cookie instanceof String) {
+      cookie = Cookie.parse(cookie, { loose: loose });
+      if (!cookie) {
+        err = new Error("Cookie failed to parse");
+        return cb(options.ignoreError ? null : err);
+      }
+    } else if (!(cookie instanceof Cookie)) {
+      // If you're seeing this error, and are passing in a Cookie object,
+      // it *might* be a Cookie object from another loaded version of tough-cookie.
+      err = new Error(
+        "First argument to setCookie must be a Cookie object or string"
+      );
+      return cb(options.ignoreError ? null : err);
+    }
+
+    // S5.3 step 2
+    const now = options.now || new Date(); // will assign later to save effort in the face of errors
+
+    // S5.3 step 3: NOOP; persistent-flag and expiry-time is handled by getCookie()
+
+    // S5.3 step 4: NOOP; domain is null by default
+
+    // S5.3 step 5: public suffixes
+    if (this.rejectPublicSuffixes && cookie.domain) {
+      const suffix = pubsuffix.getPublicSuffix(cookie.cdomain(), {
+        allowSpecialUseDomain: this.allowSpecialUseDomain,
+        ignoreError: options.ignoreError
+      });
+      if (suffix == null && !IP_V6_REGEX_OBJECT.test(cookie.domain)) {
+        // e.g. "com"
+        err = new Error("Cookie has domain set to a public suffix");
+        return cb(options.ignoreError ? null : err);
+      }
+    }
+
+    // S5.3 step 6:
+    if (cookie.domain) {
+      if (!domainMatch(host, cookie.cdomain(), false)) {
+        err = new Error(
+          `Cookie not in this host's domain. Cookie:${cookie.cdomain()} Request:${host}`
+        );
+        return cb(options.ignoreError ? null : err);
+      }
+
+      if (cookie.hostOnly == null) {
+        // don't reset if already set
+        cookie.hostOnly = false;
+      }
+    } else {
+      cookie.hostOnly = true;
+      cookie.domain = host;
+    }
+
+    //S5.2.4 If the attribute-value is empty or if the first character of the
+    //attribute-value is not %x2F ("/"):
+    //Let cookie-path be the default-path.
+    if (!cookie.path || cookie.path[0] !== "/") {
+      cookie.path = defaultPath(context.pathname);
+      cookie.pathIsDefault = true;
+    }
+
+    // S5.3 step 8: NOOP; secure attribute
+    // S5.3 step 9: NOOP; httpOnly attribute
+
+    // S5.3 step 10
+    if (options.http === false && cookie.httpOnly) {
+      err = new Error("Cookie is HttpOnly and this isn't an HTTP API");
+      return cb(options.ignoreError ? null : err);
+    }
+
+    // 6252bis-02 S5.4 Step 13 & 14:
+    if (
+      cookie.sameSite !== "none" &&
+      cookie.sameSite !== undefined &&
+      sameSiteContext
+    ) {
+      // "If the cookie's "same-site-flag" is not "None", and the cookie
+      //  is being set from a context whose "site for cookies" is not an
+      //  exact match for request-uri's host's registered domain, then
+      //  abort these steps and ignore the newly created cookie entirely."
+      if (sameSiteContext === "none") {
+        err = new Error(
+          "Cookie is SameSite but this is a cross-origin request"
+        );
+        return cb(options.ignoreError ? null : err);
+      }
+    }
+
+    /* 6265bis-02 S5.4 Steps 15 & 16 */
+    const ignoreErrorForPrefixSecurity =
+      this.prefixSecurity === PrefixSecurityEnum.SILENT;
+    const prefixSecurityDisabled =
+      this.prefixSecurity === PrefixSecurityEnum.DISABLED;
+    /* If prefix checking is not disabled ...*/
+    if (!prefixSecurityDisabled) {
+      let errorFound = false;
+      let errorMsg;
+      /* Check secure prefix condition */
+      if (!isSecurePrefixConditionMet(cookie)) {
+        errorFound = true;
+        errorMsg = "Cookie has __Secure prefix but Secure attribute is not set";
+      } else if (!isHostPrefixConditionMet(cookie)) {
+        /* Check host prefix condition */
+        errorFound = true;
+        errorMsg =
+          "Cookie has __Host prefix but either Secure or HostOnly attribute is not set or Path is not '/'";
+      }
+      if (errorFound) {
+        return cb(
+          options.ignoreError || ignoreErrorForPrefixSecurity
+            ? null
+            : new Error(errorMsg)
+        );
+      }
+    }
+
+    const store = this.store;
+
+    if (!store.updateCookie) {
+      store.updateCookie = function(oldCookie, newCookie, cb) {
+        this.putCookie(newCookie, cb);
+      };
+    }
+
+    function withCookie(err, oldCookie) {
+      if (err) {
+        return cb(err);
+      }
+
+      const next = function(err) {
+        if (err) {
+          return cb(err);
+        } else {
+          cb(null, cookie);
+        }
+      };
+
+      if (oldCookie) {
+        // S5.3 step 11 - "If the cookie store contains a cookie with the same name,
+        // domain, and path as the newly created cookie:"
+        if (options.http === false && oldCookie.httpOnly) {
+          // step 11.2
+          err = new Error("old Cookie is HttpOnly and this isn't an HTTP API");
+          return cb(options.ignoreError ? null : err);
+        }
+        cookie.creation = oldCookie.creation; // step 11.3
+        cookie.creationIndex = oldCookie.creationIndex; // preserve tie-breaker
+        cookie.lastAccessed = now;
+        // Step 11.4 (delete cookie) is implied by just setting the new one:
+        store.updateCookie(oldCookie, cookie, next); // step 12
+      } else {
+        cookie.creation = cookie.lastAccessed = now;
+        store.putCookie(cookie, next); // step 12
+      }
+    }
+
+    store.findCookie(cookie.domain, cookie.path, cookie.key, withCookie);
+  }
+
+  // RFC6365 S5.4
+  getCookies(url, options, cb) {
+    validators.validate(validators.isUrlStringOrObject(url), cb, url);
+
+    const context = getCookieContext(url);
+    if (validators.isFunction(options)) {
+      cb = options;
+      options = {};
+    }
+    validators.validate(validators.isObject(options), cb, options);
+    validators.validate(validators.isFunction(cb), cb);
+
+    const host = canonicalDomain(context.hostname);
+    const path = context.pathname || "/";
+
+    let secure = options.secure;
+    if (
+      secure == null &&
+      context.protocol &&
+      (context.protocol == "https:" || context.protocol == "wss:")
+    ) {
+      secure = true;
+    }
+
+    let sameSiteLevel = 0;
+    if (options.sameSiteContext) {
+      const sameSiteContext = checkSameSiteContext(options.sameSiteContext);
+      sameSiteLevel = Cookie.sameSiteLevel[sameSiteContext];
+      if (!sameSiteLevel) {
+        return cb(new Error(SAME_SITE_CONTEXT_VAL_ERR));
+      }
+    }
+
+    let http = options.http;
+    if (http == null) {
+      http = true;
+    }
+
+    const now = options.now || Date.now();
+    const expireCheck = options.expire !== false;
+    const allPaths = !!options.allPaths;
+    const store = this.store;
+
+    function matchingCookie(c) {
+      // "Either:
+      //   The cookie's host-only-flag is true and the canonicalized
+      //   request-host is identical to the cookie's domain.
+      // Or:
+      //   The cookie's host-only-flag is false and the canonicalized
+      //   request-host domain-matches the cookie's domain."
+      if (c.hostOnly) {
+        if (c.domain != host) {
+          return false;
+        }
+      } else {
+        if (!domainMatch(host, c.domain, false)) {
+          return false;
+        }
+      }
+
+      // "The request-uri's path path-matches the cookie's path."
+      if (!allPaths && !pathMatch(path, c.path)) {
+        return false;
+      }
+
+      // "If the cookie's secure-only-flag is true, then the request-uri's
+      // scheme must denote a "secure" protocol"
+      if (c.secure && !secure) {
+        return false;
+      }
+
+      // "If the cookie's http-only-flag is true, then exclude the cookie if the
+      // cookie-string is being generated for a "non-HTTP" API"
+      if (c.httpOnly && !http) {
+        return false;
+      }
+
+      // RFC6265bis-02 S5.3.7
+      if (sameSiteLevel) {
+        const cookieLevel = Cookie.sameSiteLevel[c.sameSite || "none"];
+        if (cookieLevel > sameSiteLevel) {
+          // only allow cookies at or below the request level
+          return false;
+        }
+      }
+
+      // deferred from S5.3
+      // non-RFC: allow retention of expired cookies by choice
+      if (expireCheck && c.expiryTime() <= now) {
+        store.removeCookie(c.domain, c.path, c.key, () => {}); // result ignored
+        return false;
+      }
+
+      return true;
+    }
+
+    store.findCookies(
+      host,
+      allPaths ? null : path,
+      this.allowSpecialUseDomain,
+      (err, cookies) => {
+        if (err) {
+          return cb(err);
+        }
+
+        cookies = cookies.filter(matchingCookie);
+
+        // sorting of S5.4 part 2
+        if (options.sort !== false) {
+          cookies = cookies.sort(cookieCompare);
+        }
+
+        // S5.4 part 3
+        const now = new Date();
+        for (const cookie of cookies) {
+          cookie.lastAccessed = now;
+        }
+        // TODO persist lastAccessed
+
+        cb(null, cookies);
+      }
+    );
+  }
+
+  getCookieString(...args) {
+    const cb = args.pop();
+    validators.validate(validators.isFunction(cb), cb);
+    const next = function(err, cookies) {
+      if (err) {
+        cb(err);
+      } else {
+        cb(
+          null,
+          cookies
+            .sort(cookieCompare)
+            .map(c => c.cookieString())
+            .join("; ")
+        );
+      }
+    };
+    args.push(next);
+    this.getCookies.apply(this, args);
+  }
+
+  getSetCookieStrings(...args) {
+    const cb = args.pop();
+    validators.validate(validators.isFunction(cb), cb);
+    const next = function(err, cookies) {
+      if (err) {
+        cb(err);
+      } else {
+        cb(
+          null,
+          cookies.map(c => {
+            return c.toString();
+          })
+        );
+      }
+    };
+    args.push(next);
+    this.getCookies.apply(this, args);
+  }
+
+  serialize(cb) {
+    validators.validate(validators.isFunction(cb), cb);
+    let type = this.store.constructor.name;
+    if (validators.isObject(type)) {
+      type = null;
+    }
+
+    // update README.md "Serialization Format" if you change this, please!
+    const serialized = {
+      // The version of tough-cookie that serialized this jar. Generally a good
+      // practice since future versions can make data import decisions based on
+      // known past behavior. When/if this matters, use `semver`.
+      version: `tough-cookie@${VERSION}`,
+
+      // add the store type, to make humans happy:
+      storeType: type,
+
+      // CookieJar configuration:
+      rejectPublicSuffixes: !!this.rejectPublicSuffixes,
+      enableLooseMode: !!this.enableLooseMode,
+      allowSpecialUseDomain: !!this.allowSpecialUseDomain,
+      prefixSecurity: getNormalizedPrefixSecurity(this.prefixSecurity),
+
+      // this gets filled from getAllCookies:
+      cookies: []
+    };
+
+    if (
+      !(
+        this.store.getAllCookies &&
+        typeof this.store.getAllCookies === "function"
+      )
+    ) {
+      return cb(
+        new Error(
+          "store does not support getAllCookies and cannot be serialized"
+        )
+      );
+    }
+
+    this.store.getAllCookies((err, cookies) => {
+      if (err) {
+        return cb(err);
+      }
+
+      serialized.cookies = cookies.map(cookie => {
+        // convert to serialized 'raw' cookies
+        cookie = cookie instanceof Cookie ? cookie.toJSON() : cookie;
+
+        // Remove the index so new ones get assigned during deserialization
+        delete cookie.creationIndex;
+
+        return cookie;
+      });
+
+      return cb(null, serialized);
+    });
+  }
+
+  toJSON() {
+    return this.serializeSync();
+  }
+
+  // use the class method CookieJar.deserialize instead of calling this directly
+  _importCookies(serialized, cb) {
+    let cookies = serialized.cookies;
+    if (!cookies || !Array.isArray(cookies)) {
+      return cb(new Error("serialized jar has no cookies array"));
+    }
+    cookies = cookies.slice(); // do not modify the original
+
+    const putNext = err => {
+      if (err) {
+        return cb(err);
+      }
+
+      if (!cookies.length) {
+        return cb(err, this);
+      }
+
+      let cookie;
+      try {
+        cookie = fromJSON(cookies.shift());
+      } catch (e) {
+        return cb(e);
+      }
+
+      if (cookie === null) {
+        return putNext(null); // skip this cookie
+      }
+
+      this.store.putCookie(cookie, putNext);
+    };
+
+    putNext();
+  }
+
+  clone(newStore, cb) {
+    if (arguments.length === 1) {
+      cb = newStore;
+      newStore = null;
+    }
+
+    this.serialize((err, serialized) => {
+      if (err) {
+        return cb(err);
+      }
+      CookieJar.deserialize(serialized, newStore, cb);
+    });
+  }
+
+  cloneSync(newStore) {
+    if (arguments.length === 0) {
+      return this._cloneSync();
+    }
+    if (!newStore.synchronous) {
+      throw new Error(
+        "CookieJar clone destination store is not synchronous; use async API instead."
+      );
+    }
+    return this._cloneSync(newStore);
+  }
+
+  removeAllCookies(cb) {
+    validators.validate(validators.isFunction(cb), cb);
+    const store = this.store;
+
+    // Check that the store implements its own removeAllCookies(). The default
+    // implementation in Store will immediately call the callback with a "not
+    // implemented" Error.
+    if (
+      typeof store.removeAllCookies === "function" &&
+      store.removeAllCookies !== Store.prototype.removeAllCookies
+    ) {
+      return store.removeAllCookies(cb);
+    }
+
+    store.getAllCookies((err, cookies) => {
+      if (err) {
+        return cb(err);
+      }
+
+      if (cookies.length === 0) {
+        return cb(null);
+      }
+
+      let completedCount = 0;
+      const removeErrors = [];
+
+      function removeCookieCb(removeErr) {
+        if (removeErr) {
+          removeErrors.push(removeErr);
+        }
+
+        completedCount++;
+
+        if (completedCount === cookies.length) {
+          return cb(removeErrors.length ? removeErrors[0] : null);
+        }
+      }
+
+      cookies.forEach(cookie => {
+        store.removeCookie(
+          cookie.domain,
+          cookie.path,
+          cookie.key,
+          removeCookieCb
+        );
+      });
+    });
+  }
+
+  static deserialize(strOrObj, store, cb) {
+    if (arguments.length !== 3) {
+      // store is optional
+      cb = store;
+      store = null;
+    }
+    validators.validate(validators.isFunction(cb), cb);
+
+    let serialized;
+    if (typeof strOrObj === "string") {
+      serialized = jsonParse(strOrObj);
+      if (serialized instanceof Error) {
+        return cb(serialized);
+      }
+    } else {
+      serialized = strOrObj;
+    }
+
+    const jar = new CookieJar(store, {
+      rejectPublicSuffixes: serialized.rejectPublicSuffixes,
+      looseMode: serialized.enableLooseMode,
+      allowSpecialUseDomain: serialized.allowSpecialUseDomain,
+      prefixSecurity: serialized.prefixSecurity
+    });
+    jar._importCookies(serialized, err => {
+      if (err) {
+        return cb(err);
+      }
+      cb(null, jar);
+    });
+  }
+
+  static deserializeSync(strOrObj, store) {
+    const serialized =
+      typeof strOrObj === "string" ? JSON.parse(strOrObj) : strOrObj;
+    const jar = new CookieJar(store, {
+      rejectPublicSuffixes: serialized.rejectPublicSuffixes,
+      looseMode: serialized.enableLooseMode
+    });
+
+    // catch this mistake early:
+    if (!jar.store.synchronous) {
+      throw new Error(
+        "CookieJar store is not synchronous; use async API instead."
+      );
+    }
+
+    jar._importCookiesSync(serialized);
+    return jar;
+  }
+}
+CookieJar.fromJSON = CookieJar.deserializeSync;
+
+[
+  "_importCookies",
+  "clone",
+  "getCookies",
+  "getCookieString",
+  "getSetCookieStrings",
+  "removeAllCookies",
+  "serialize",
+  "setCookie"
+].forEach(name => {
+  CookieJar.prototype[name] = fromCallback(CookieJar.prototype[name]);
+});
+CookieJar.deserialize = fromCallback(CookieJar.deserialize);
+
+// Use a closure to provide a true imperative API for synchronous stores.
+function syncWrap(method) {
+  return function(...args) {
+    if (!this.store.synchronous) {
+      throw new Error(
+        "CookieJar store is not synchronous; use async API instead."
+      );
+    }
+
+    let syncErr, syncResult;
+    this[method](...args, (err, result) => {
+      syncErr = err;
+      syncResult = result;
+    });
+
+    if (syncErr) {
+      throw syncErr;
+    }
+    return syncResult;
+  };
+}
+
+exports.version = VERSION;
+exports.CookieJar = CookieJar;
+exports.Cookie = Cookie;
+exports.Store = Store;
+exports.MemoryCookieStore = MemoryCookieStore;
+exports.parseDate = parseDate;
+exports.formatDate = formatDate;
+exports.parse = parse;
+exports.fromJSON = fromJSON;
+exports.domainMatch = domainMatch;
+exports.defaultPath = defaultPath;
+exports.pathMatch = pathMatch;
+exports.getPublicSuffix = pubsuffix.getPublicSuffix;
+exports.cookieCompare = cookieCompare;
+exports.permuteDomain = __nccwpck_require__(7186).permuteDomain;
+exports.permutePath = permutePath;
+exports.canonicalDomain = canonicalDomain;
+exports.PrefixSecurityEnum = PrefixSecurityEnum;
+exports.ParameterError = validators.ParameterError;
+
+
+/***/ }),
+
+/***/ 4536:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+var __webpack_unused_export__;
+/*!
+ * Copyright (c) 2015, Salesforce.com, Inc.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of Salesforce.com nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+const { fromCallback } = __nccwpck_require__(9046);
+const Store = (__nccwpck_require__(7009)/* .Store */ .y);
+const permuteDomain = (__nccwpck_require__(7186).permuteDomain);
+const pathMatch = (__nccwpck_require__(6021)/* .pathMatch */ .U);
+const { getCustomInspectSymbol, getUtilInspect } = __nccwpck_require__(1293);
+
+class MemoryCookieStore extends Store {
+  constructor() {
+    super();
+    this.synchronous = true;
+    this.idx = {};
+    const customInspectSymbol = getCustomInspectSymbol();
+    if (customInspectSymbol) {
+      this[customInspectSymbol] = this.inspect;
+    }
+  }
+
+  inspect() {
+    const util = { inspect: getUtilInspect(inspectFallback) };
+    return `{ idx: ${util.inspect(this.idx, false, 2)} }`;
+  }
+
+  findCookie(domain, path, key, cb) {
+    if (!this.idx[domain]) {
+      return cb(null, undefined);
+    }
+    if (!this.idx[domain][path]) {
+      return cb(null, undefined);
+    }
+    return cb(null, this.idx[domain][path][key] || null);
+  }
+  findCookies(domain, path, allowSpecialUseDomain, cb) {
+    const results = [];
+    if (typeof allowSpecialUseDomain === "function") {
+      cb = allowSpecialUseDomain;
+      allowSpecialUseDomain = true;
+    }
+    if (!domain) {
+      return cb(null, []);
+    }
+
+    let pathMatcher;
+    if (!path) {
+      // null means "all paths"
+      pathMatcher = function matchAll(domainIndex) {
+        for (const curPath in domainIndex) {
+          const pathIndex = domainIndex[curPath];
+          for (const key in pathIndex) {
+            results.push(pathIndex[key]);
+          }
+        }
+      };
+    } else {
+      pathMatcher = function matchRFC(domainIndex) {
+        //NOTE: we should use path-match algorithm from S5.1.4 here
+        //(see : https://github.com/ChromiumWebApps/chromium/blob/b3d3b4da8bb94c1b2e061600df106d590fda3620/net/cookies/canonical_cookie.cc#L299)
+        Object.keys(domainIndex).forEach(cookiePath => {
+          if (pathMatch(path, cookiePath)) {
+            const pathIndex = domainIndex[cookiePath];
+            for (const key in pathIndex) {
+              results.push(pathIndex[key]);
+            }
+          }
+        });
+      };
+    }
+
+    const domains = permuteDomain(domain, allowSpecialUseDomain) || [domain];
+    const idx = this.idx;
+    domains.forEach(curDomain => {
+      const domainIndex = idx[curDomain];
+      if (!domainIndex) {
+        return;
+      }
+      pathMatcher(domainIndex);
+    });
+
+    cb(null, results);
+  }
+
+  putCookie(cookie, cb) {
+    if (!this.idx[cookie.domain]) {
+      this.idx[cookie.domain] = {};
+    }
+    if (!this.idx[cookie.domain][cookie.path]) {
+      this.idx[cookie.domain][cookie.path] = {};
+    }
+    this.idx[cookie.domain][cookie.path][cookie.key] = cookie;
+    cb(null);
+  }
+  updateCookie(oldCookie, newCookie, cb) {
+    // updateCookie() may avoid updating cookies that are identical.  For example,
+    // lastAccessed may not be important to some stores and an equality
+    // comparison could exclude that field.
+    this.putCookie(newCookie, cb);
+  }
+  removeCookie(domain, path, key, cb) {
+    if (
+      this.idx[domain] &&
+      this.idx[domain][path] &&
+      this.idx[domain][path][key]
+    ) {
+      delete this.idx[domain][path][key];
+    }
+    cb(null);
+  }
+  removeCookies(domain, path, cb) {
+    if (this.idx[domain]) {
+      if (path) {
+        delete this.idx[domain][path];
+      } else {
+        delete this.idx[domain];
+      }
+    }
+    return cb(null);
+  }
+  removeAllCookies(cb) {
+    this.idx = {};
+    return cb(null);
+  }
+  getAllCookies(cb) {
+    const cookies = [];
+    const idx = this.idx;
+
+    const domains = Object.keys(idx);
+    domains.forEach(domain => {
+      const paths = Object.keys(idx[domain]);
+      paths.forEach(path => {
+        const keys = Object.keys(idx[domain][path]);
+        keys.forEach(key => {
+          if (key !== null) {
+            cookies.push(idx[domain][path][key]);
+          }
+        });
+      });
+    });
+
+    // Sort by creationIndex so deserializing retains the creation order.
+    // When implementing your own store, this SHOULD retain the order too
+    cookies.sort((a, b) => {
+      return (a.creationIndex || 0) - (b.creationIndex || 0);
+    });
+
+    cb(null, cookies);
+  }
+}
+
+[
+  "findCookie",
+  "findCookies",
+  "putCookie",
+  "updateCookie",
+  "removeCookie",
+  "removeCookies",
+  "removeAllCookies",
+  "getAllCookies"
+].forEach(name => {
+  MemoryCookieStore.prototype[name] = fromCallback(
+    MemoryCookieStore.prototype[name]
+  );
+});
+
+exports.m = MemoryCookieStore;
+
+function inspectFallback(val) {
+  const domains = Object.keys(val);
+  if (domains.length === 0) {
+    return "{}";
+  }
+  let result = "{\n";
+  Object.keys(val).forEach((domain, i) => {
+    result += formatDomain(domain, val[domain]);
+    if (i < domains.length - 1) {
+      result += ",";
+    }
+    result += "\n";
+  });
+  result += "}";
+  return result;
+}
+
+function formatDomain(domainName, domainValue) {
+  const indent = "  ";
+  let result = `${indent}'${domainName}': {\n`;
+  Object.keys(domainValue).forEach((path, i, paths) => {
+    result += formatPath(path, domainValue[path]);
+    if (i < paths.length - 1) {
+      result += ",";
+    }
+    result += "\n";
+  });
+  result += `${indent}}`;
+  return result;
+}
+
+function formatPath(pathName, pathValue) {
+  const indent = "    ";
+  let result = `${indent}'${pathName}': {\n`;
+  Object.keys(pathValue).forEach((cookieName, i, cookieNames) => {
+    const cookie = pathValue[cookieName];
+    result += `      ${cookieName}: ${cookie.inspect()}`;
+    if (i < cookieNames.length - 1) {
+      result += ",";
+    }
+    result += "\n";
+  });
+  result += `${indent}}`;
+  return result;
+}
+
+__webpack_unused_export__ = inspectFallback;
+
+
+/***/ }),
+
+/***/ 6021:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+/*!
+ * Copyright (c) 2015, Salesforce.com, Inc.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of Salesforce.com nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*
+ * "A request-path path-matches a given cookie-path if at least one of the
+ * following conditions holds:"
+ */
+function pathMatch(reqPath, cookiePath) {
+  // "o  The cookie-path and the request-path are identical."
+  if (cookiePath === reqPath) {
+    return true;
+  }
+
+  const idx = reqPath.indexOf(cookiePath);
+  if (idx === 0) {
+    // "o  The cookie-path is a prefix of the request-path, and the last
+    // character of the cookie-path is %x2F ("/")."
+    if (cookiePath.substr(-1) === "/") {
+      return true;
+    }
+
+    // " o  The cookie-path is a prefix of the request-path, and the first
+    // character of the request-path that is not included in the cookie- path
+    // is a %x2F ("/") character."
+    if (reqPath.substr(cookiePath.length, 1) === "/") {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+exports.U = pathMatch;
+
+
+/***/ }),
+
+/***/ 7186:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+/*!
+ * Copyright (c) 2015, Salesforce.com, Inc.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of Salesforce.com nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+const pubsuffix = __nccwpck_require__(6991);
+
+// Gives the permutation of all possible domainMatch()es of a given domain. The
+// array is in shortest-to-longest order.  Handy for indexing.
+
+function permuteDomain(domain, allowSpecialUseDomain) {
+  const pubSuf = pubsuffix.getPublicSuffix(domain, {
+    allowSpecialUseDomain: allowSpecialUseDomain
+  });
+
+  if (!pubSuf) {
+    return null;
+  }
+  if (pubSuf == domain) {
+    return [domain];
+  }
+
+  // Nuke trailing dot
+  if (domain.slice(-1) == ".") {
+    domain = domain.slice(0, -1);
+  }
+
+  const prefix = domain.slice(0, -(pubSuf.length + 1)); // ".example.com"
+  const parts = prefix.split(".").reverse();
+  let cur = pubSuf;
+  const permutations = [cur];
+  while (parts.length) {
+    cur = `${parts.shift()}.${cur}`;
+    permutations.push(cur);
+  }
+  return permutations;
+}
+
+exports.permuteDomain = permuteDomain;
+
+
+/***/ }),
+
+/***/ 6991:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+/*!
+ * Copyright (c) 2018, Salesforce.com, Inc.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of Salesforce.com nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+const psl = __nccwpck_require__(9975);
+
+// RFC 6761
+const SPECIAL_USE_DOMAINS = [
+  "local",
+  "example",
+  "invalid",
+  "localhost",
+  "test"
+];
+
+const SPECIAL_TREATMENT_DOMAINS = ["localhost", "invalid"];
+
+function getPublicSuffix(domain, options = {}) {
+  const domainParts = domain.split(".");
+  const topLevelDomain = domainParts[domainParts.length - 1];
+  const allowSpecialUseDomain = !!options.allowSpecialUseDomain;
+  const ignoreError = !!options.ignoreError;
+
+  if (allowSpecialUseDomain && SPECIAL_USE_DOMAINS.includes(topLevelDomain)) {
+    if (domainParts.length > 1) {
+      const secondLevelDomain = domainParts[domainParts.length - 2];
+      // In aforementioned example, the eTLD/pubSuf will be apple.localhost
+      return `${secondLevelDomain}.${topLevelDomain}`;
+    } else if (SPECIAL_TREATMENT_DOMAINS.includes(topLevelDomain)) {
+      // For a single word special use domain, e.g. 'localhost' or 'invalid', per RFC 6761,
+      // "Application software MAY recognize {localhost/invalid} names as special, or
+      // MAY pass them to name resolution APIs as they would for other domain names."
+      return `${topLevelDomain}`;
+    }
+  }
+
+  if (
+    !ignoreError &&
+    !allowSpecialUseDomain &&
+    SPECIAL_USE_DOMAINS.includes(topLevelDomain)
+  ) {
+    throw new Error(
+      `Cookie has domain set to the public suffix "${topLevelDomain}" which is a special use domain. To allow this, configure your CookieJar with {allowSpecialUseDomain:true, rejectPublicSuffixes: false}.`
+    );
+  }
+
+  return psl.get(domain);
+}
+
+exports.getPublicSuffix = getPublicSuffix;
+
+
+/***/ }),
+
+/***/ 7009:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+/*!
+ * Copyright (c) 2015, Salesforce.com, Inc.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright notice,
+ * this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright notice,
+ * this list of conditions and the following disclaimer in the documentation
+ * and/or other materials provided with the distribution.
+ *
+ * 3. Neither the name of Salesforce.com nor the names of its contributors may
+ * be used to endorse or promote products derived from this software without
+ * specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*jshint unused:false */
+
+class Store {
+  constructor() {
+    this.synchronous = false;
+  }
+
+  findCookie(domain, path, key, cb) {
+    throw new Error("findCookie is not implemented");
+  }
+
+  findCookies(domain, path, allowSpecialUseDomain, cb) {
+    throw new Error("findCookies is not implemented");
+  }
+
+  putCookie(cookie, cb) {
+    throw new Error("putCookie is not implemented");
+  }
+
+  updateCookie(oldCookie, newCookie, cb) {
+    // recommended default implementation:
+    // return this.putCookie(newCookie, cb);
+    throw new Error("updateCookie is not implemented");
+  }
+
+  removeCookie(domain, path, key, cb) {
+    throw new Error("removeCookie is not implemented");
+  }
+
+  removeCookies(domain, path, cb) {
+    throw new Error("removeCookies is not implemented");
+  }
+
+  removeAllCookies(cb) {
+    throw new Error("removeAllCookies is not implemented");
+  }
+
+  getAllCookies(cb) {
+    throw new Error(
+      "getAllCookies is not implemented (therefore jar cannot be serialized)"
+    );
+  }
+}
+
+exports.y = Store;
+
+
+/***/ }),
+
+/***/ 1293:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+function requireUtil() {
+  try {
+    // eslint-disable-next-line no-restricted-modules
+    return __nccwpck_require__(3837);
+  } catch (e) {
+    return null;
+  }
+}
+
+// for v10.12.0+
+function lookupCustomInspectSymbol() {
+  return Symbol.for("nodejs.util.inspect.custom");
+}
+
+// for older node environments
+function tryReadingCustomSymbolFromUtilInspect(options) {
+  const _requireUtil = options.requireUtil || requireUtil;
+  const util = _requireUtil();
+  return util ? util.inspect.custom : null;
+}
+
+exports.getUtilInspect = function getUtilInspect(fallback, options = {}) {
+  const _requireUtil = options.requireUtil || requireUtil;
+  const util = _requireUtil();
+  return function inspect(value, showHidden, depth) {
+    return util ? util.inspect(value, showHidden, depth) : fallback(value);
+  };
+};
+
+exports.getCustomInspectSymbol = function getCustomInspectSymbol(options = {}) {
+  const _lookupCustomInspectSymbol =
+    options.lookupCustomInspectSymbol || lookupCustomInspectSymbol;
+
+  // get custom inspect symbol for node environments
+  return (
+    _lookupCustomInspectSymbol() ||
+    tryReadingCustomSymbolFromUtilInspect(options)
+  );
+};
+
+
+/***/ }),
+
+/***/ 3265:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+/* ************************************************************************************
+Extracted from check-types.js
+https://gitlab.com/philbooth/check-types.js
+
+MIT License
+
+Copyright (c) 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019 Phil Booth
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+************************************************************************************ */
+
+
+/* Validation functions copied from check-types package - https://www.npmjs.com/package/check-types */
+function isFunction(data) {
+  return typeof data === "function";
+}
+
+function isNonEmptyString(data) {
+  return isString(data) && data !== "";
+}
+
+function isDate(data) {
+  return isInstanceStrict(data, Date) && isInteger(data.getTime());
+}
+
+function isEmptyString(data) {
+  return data === "" || (data instanceof String && data.toString() === "");
+}
+
+function isString(data) {
+  return typeof data === "string" || data instanceof String;
+}
+
+function isObject(data) {
+  return toString.call(data) === "[object Object]";
+}
+function isInstanceStrict(data, prototype) {
+  try {
+    return data instanceof prototype;
+  } catch (error) {
+    return false;
+  }
+}
+
+function isUrlStringOrObject(data) {
+  return (
+    isNonEmptyString(data) ||
+    isObject(data) || // TODO: Check for URL properties that are used.
+    isInstanceStrict(data, URL)
+  );
+}
+
+function isInteger(data) {
+  return typeof data === "number" && data % 1 === 0;
+}
+/* End validation functions */
+
+function validate(bool, cb, options) {
+  if (!isFunction(cb)) {
+    options = cb;
+    cb = null;
+  }
+  if (!isObject(options)) options = { Error: "Failed Check" };
+  if (!bool) {
+    if (cb) {
+      cb(new ParameterError(options));
+    } else {
+      throw new ParameterError(options);
+    }
+  }
+}
+
+class ParameterError extends Error {
+  constructor(...params) {
+    super(...params);
+  }
+}
+
+exports.ParameterError = ParameterError;
+exports.isFunction = isFunction;
+exports.isNonEmptyString = isNonEmptyString;
+exports.isDate = isDate;
+exports.isEmptyString = isEmptyString;
+exports.isString = isString;
+exports.isObject = isObject;
+exports.isUrlStringOrObject = isUrlStringOrObject;
+exports.validate = validate;
+
+
+/***/ }),
+
+/***/ 610:
+/***/ ((module) => {
+
+// generated by genversion
+module.exports = '4.1.2-postman.1'
 
 
 /***/ }),
@@ -11372,6 +13869,9 @@ function RequestSigner(request, credentials) {
     request.hostname = headers.Host || headers.host
 
   this.isCodeCommitGit = this.service === 'codecommit' && request.method === 'GIT'
+
+  this.extraHeadersToIgnore = request.extraHeadersToIgnore || Object.create(null)
+  this.extraHeadersToInclude = request.extraHeadersToInclude || Object.create(null)
 }
 
 RequestSigner.prototype.matchHost = function(host) {
@@ -11381,7 +13881,7 @@ RequestSigner.prototype.matchHost = function(host) {
   // ES's hostParts are sometimes the other way round, if the value that is expected
   // to be region equals ‘es’ switch them back
   // e.g. search-cluster-name-aaaa00aaaa0aaa0aaaaaaa0aaa.us-east-1.es.amazonaws.com
-  if (hostParts[1] === 'es')
+  if (hostParts[1] === 'es' || hostParts[1] === 'aoss')
     hostParts = hostParts.reverse()
 
   if (hostParts[1] == 's3') {
@@ -11605,9 +14105,14 @@ RequestSigner.prototype.canonicalHeaders = function() {
 }
 
 RequestSigner.prototype.signedHeaders = function() {
+  var extraHeadersToInclude = this.extraHeadersToInclude,
+      extraHeadersToIgnore = this.extraHeadersToIgnore
   return Object.keys(this.request.headers)
     .map(function(key) { return key.toLowerCase() })
-    .filter(function(key) { return HEADERS_TO_IGNORE[key] == null })
+    .filter(function(key) {
+      return extraHeadersToInclude[key] ||
+        (HEADERS_TO_IGNORE[key] == null && !extraHeadersToIgnore[key])
+    })
     .sort()
     .join(';')
 }
@@ -32080,17 +34585,23 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports["default"] = void 0;
 
-var _postmanRequest = _interopRequireDefault(__nccwpck_require__(6501));
-
 var _url = _interopRequireDefault(__nccwpck_require__(7310));
+
+// Need to use require here for testing
+// eslint-disable-next-line no-underscore-dangle
+const _request = __nccwpck_require__(6501);
 
 function request(uri, options) {
   return new Promise((resolve, reject) => {
-    (0, _postmanRequest.default)(uri, options, (err, httpResponse) => {
+    _request(uri, options, (err, httpResponse) => {
       if (err) {
         reject(err);
       } else {
-        // for compatibility with request-promise
+        if (httpResponse.statusCode >= 400) {
+          reject(httpResponse.body);
+        } // for compatibility with request-promise
+
+
         resolve(httpResponse.body);
       }
     });
@@ -32399,15 +34910,20 @@ class JiraApi {
     const options = { ...this.baseOptions,
       ...requestOptions
     };
-    const response = await this.request(options);
 
-    if (response) {
-      if (Array.isArray(response.errorMessages) && response.errorMessages.length > 0) {
-        throw new Error(response.errorMessages.join(', '));
+    try {
+      const response = await this.request(options);
+
+      if (response) {
+        if (Array.isArray(response.errorMessages) && response.errorMessages.length > 0) {
+          throw new Error(response.errorMessages.join(', '));
+        }
       }
-    }
 
-    return response;
+      return response;
+    } catch (e) {
+      throw new Error(JSON.stringify(e));
+    }
   }
   /**
    * @name findIssue
@@ -32883,6 +35399,7 @@ class JiraApi {
    * @param {string} groupname - A query string used to search users in group
    * @param {integer} [startAt=0] - The index of the first user to return (0-based)
    * @param {integer} [maxResults=50] - The maximum number of users to return (defaults to 50).
+   * @deprecated
    */
 
 
@@ -32892,6 +35409,28 @@ class JiraApi {
       query: {
         groupname,
         expand: `users[${startAt}:${maxResults}]`
+      }
+    }), {
+      followAllRedirects: true
+    }));
+  }
+  /** Get all members of group on Jira
+   * @name getMembersOfGroup
+   * @function
+   * @param {string} groupname - A query string used to search users in group
+   * @param {integer} [startAt=0] - The index of the first user to return (0-based)
+   * @param {integer} [maxResults=50] - The maximum number of users to return (defaults to 50).
+   * @param {boolean} [includeInactiveUsers=false] - Fetch inactive users too (defaults to false).
+   */
+
+
+  getMembersOfGroup(groupname, startAt = 0, maxResults = 50, includeInactiveUsers = false) {
+    return this.doRequest(this.makeRequestHeader(this.makeUri({
+      pathname: '/group/member',
+      query: {
+        groupname,
+        expand: `users[${startAt}:${maxResults}]`,
+        includeInactiveUsers
       }
     }), {
       followAllRedirects: true
@@ -33534,6 +36073,25 @@ class JiraApi {
       pathname: `/issue/${issueId}/worklog/${worklogId}`
     }), {
       method: 'DELETE',
+      followAllRedirects: true
+    }));
+  }
+  /** Update worklog from issue
+   * [Jira Doc](https://developer.atlassian.com/cloud/jira/platform/rest/v2/api-group-issue-worklogs/#api-rest-api-2-issue-issueidorkey-worklog-id-put)
+   * @name updateWorklog
+   * @function
+   * @param {string} issueId - the Id of the issue to update
+   * @param {string} worklogId - the Id of the worklog in issue to update
+   * @param {string} body - value to set
+   */
+
+
+  updateWorklog(issueId, worklogId, body) {
+    return this.doRequest(this.makeRequestHeader(this.makeUri({
+      pathname: `/issue/${issueId}/worklog/${worklogId}`
+    }), {
+      method: 'PUT',
+      body,
       followAllRedirects: true
     }));
   }
@@ -37572,7 +40130,7 @@ Object.defineProperty(request, 'debug', {
 
 
 var caseless = __nccwpck_require__(5684)
-var uuid = __nccwpck_require__(824)
+var uuid = (__nccwpck_require__(5840).v4)
 var helpers = __nccwpck_require__(454)
 
 var md5 = helpers.md5
@@ -37808,7 +40366,7 @@ module.exports.createBrotliDecompress = createBrotliDecompress
 "use strict";
 
 
-var tough = __nccwpck_require__(6361)
+var tough = __nccwpck_require__(1854)
 
 var Cookie = tough.Cookie
 var CookieJar = tough.CookieJar
@@ -38380,7 +40938,7 @@ module.exports.createInflate = function (options) {
 "use strict";
 
 
-var uuid = __nccwpck_require__(824)
+var uuid = (__nccwpck_require__(5840).v4)
 var CombinedStream = __nccwpck_require__(5443)
 var isstream = __nccwpck_require__(3362)
 var Buffer = (__nccwpck_require__(1867).Buffer)
@@ -38502,7 +41060,7 @@ exports.$ = Multipart
 
 var qs = __nccwpck_require__(2760)
 var caseless = __nccwpck_require__(5684)
-var uuid = __nccwpck_require__(824)
+var uuid = (__nccwpck_require__(5840).v4)
 var oauth = __nccwpck_require__(3248)
 var crypto = __nccwpck_require__(6113)
 var Buffer = (__nccwpck_require__(1867).Buffer)
@@ -39310,1956 +41868,6 @@ module.exports.stringify = stringify
 
 /***/ }),
 
-/***/ 6361:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-/*!
- * Copyright (c) 2015, Salesforce.com, Inc.
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- * this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- * this list of conditions and the following disclaimer in the documentation
- * and/or other materials provided with the distribution.
- *
- * 3. Neither the name of Salesforce.com nor the names of its contributors may
- * be used to endorse or promote products derived from this software without
- * specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
-
-var net = __nccwpck_require__(1808);
-var urlParse = (__nccwpck_require__(7310).parse);
-var util = __nccwpck_require__(3837);
-var pubsuffix = __nccwpck_require__(8014);
-var Store = (__nccwpck_require__(5993)/* .Store */ .y);
-var MemoryCookieStore = (__nccwpck_require__(6773)/* .MemoryCookieStore */ .m);
-var pathMatch = (__nccwpck_require__(9362)/* .pathMatch */ .U);
-var VERSION = __nccwpck_require__(6217);
-
-var punycode;
-try {
-  punycode = __nccwpck_require__(5477);
-} catch(e) {
-  console.warn("tough-cookie: can't load punycode; won't use punycode for domain normalization");
-}
-
-// From RFC6265 S4.1.1
-// note that it excludes \x3B ";"
-var COOKIE_OCTETS = /^[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]+$/;
-
-var CONTROL_CHARS = /[\x00-\x1F]/;
-
-// From Chromium // '\r', '\n' and '\0' should be treated as a terminator in
-// the "relaxed" mode, see:
-// https://github.com/ChromiumWebApps/chromium/blob/b3d3b4da8bb94c1b2e061600df106d590fda3620/net/cookies/parsed_cookie.cc#L60
-var TERMINATORS = ['\n', '\r', '\0'];
-
-// RFC6265 S4.1.1 defines path value as 'any CHAR except CTLs or ";"'
-// Note ';' is \x3B
-var PATH_VALUE = /[\x20-\x3A\x3C-\x7E]+/;
-
-// date-time parsing constants (RFC6265 S5.1.1)
-
-var DATE_DELIM = /[\x09\x20-\x2F\x3B-\x40\x5B-\x60\x7B-\x7E]/;
-
-var MONTH_TO_NUM = {
-  jan:0, feb:1, mar:2, apr:3, may:4, jun:5,
-  jul:6, aug:7, sep:8, oct:9, nov:10, dec:11
-};
-var NUM_TO_MONTH = [
-  'Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'
-];
-var NUM_TO_DAY = [
-  'Sun','Mon','Tue','Wed','Thu','Fri','Sat'
-];
-
-var MAX_TIME = 2147483647000; // 31-bit max
-var MIN_TIME = 0; // 31-bit min
-
-/*
- * Parses a Natural number (i.e., non-negative integer) with either the
- *    <min>*<max>DIGIT ( non-digit *OCTET )
- * or
- *    <min>*<max>DIGIT
- * grammar (RFC6265 S5.1.1).
- *
- * The "trailingOK" boolean controls if the grammar accepts a
- * "( non-digit *OCTET )" trailer.
- */
-function parseDigits(token, minDigits, maxDigits, trailingOK) {
-  var count = 0;
-  while (count < token.length) {
-    var c = token.charCodeAt(count);
-    // "non-digit = %x00-2F / %x3A-FF"
-    if (c <= 0x2F || c >= 0x3A) {
-      break;
-    }
-    count++;
-  }
-
-  // constrain to a minimum and maximum number of digits.
-  if (count < minDigits || count > maxDigits) {
-    return null;
-  }
-
-  if (!trailingOK && count != token.length) {
-    return null;
-  }
-
-  return parseInt(token.substr(0,count), 10);
-}
-
-function parseTime(token) {
-  var parts = token.split(':');
-  var result = [0,0,0];
-
-  /* RF6256 S5.1.1:
-   *      time            = hms-time ( non-digit *OCTET )
-   *      hms-time        = time-field ":" time-field ":" time-field
-   *      time-field      = 1*2DIGIT
-   */
-
-  if (parts.length !== 3) {
-    return null;
-  }
-
-  for (var i = 0; i < 3; i++) {
-    // "time-field" must be strictly "1*2DIGIT", HOWEVER, "hms-time" can be
-    // followed by "( non-digit *OCTET )" so therefore the last time-field can
-    // have a trailer
-    var trailingOK = (i == 2);
-    var num = parseDigits(parts[i], 1, 2, trailingOK);
-    if (num === null) {
-      return null;
-    }
-    result[i] = num;
-  }
-
-  return result;
-}
-
-function parseMonth(token) {
-  token = String(token).substr(0,3).toLowerCase();
-  var num = MONTH_TO_NUM[token];
-  return num >= 0 ? num : null;
-}
-
-/*
- * RFC6265 S5.1.1 date parser (see RFC for full grammar)
- */
-function parseDate(str) {
-  if (!str) {
-    return;
-  }
-
-  /* RFC6265 S5.1.1:
-   * 2. Process each date-token sequentially in the order the date-tokens
-   * appear in the cookie-date
-   */
-  var tokens = str.split(DATE_DELIM);
-  if (!tokens) {
-    return;
-  }
-
-  var hour = null;
-  var minute = null;
-  var second = null;
-  var dayOfMonth = null;
-  var month = null;
-  var year = null;
-
-  for (var i=0; i<tokens.length; i++) {
-    var token = tokens[i].trim();
-    if (!token.length) {
-      continue;
-    }
-
-    var result;
-
-    /* 2.1. If the found-time flag is not set and the token matches the time
-     * production, set the found-time flag and set the hour- value,
-     * minute-value, and second-value to the numbers denoted by the digits in
-     * the date-token, respectively.  Skip the remaining sub-steps and continue
-     * to the next date-token.
-     */
-    if (second === null) {
-      result = parseTime(token);
-      if (result) {
-        hour = result[0];
-        minute = result[1];
-        second = result[2];
-        continue;
-      }
-    }
-
-    /* 2.2. If the found-day-of-month flag is not set and the date-token matches
-     * the day-of-month production, set the found-day-of- month flag and set
-     * the day-of-month-value to the number denoted by the date-token.  Skip
-     * the remaining sub-steps and continue to the next date-token.
-     */
-    if (dayOfMonth === null) {
-      // "day-of-month = 1*2DIGIT ( non-digit *OCTET )"
-      result = parseDigits(token, 1, 2, true);
-      if (result !== null) {
-        dayOfMonth = result;
-        continue;
-      }
-    }
-
-    /* 2.3. If the found-month flag is not set and the date-token matches the
-     * month production, set the found-month flag and set the month-value to
-     * the month denoted by the date-token.  Skip the remaining sub-steps and
-     * continue to the next date-token.
-     */
-    if (month === null) {
-      result = parseMonth(token);
-      if (result !== null) {
-        month = result;
-        continue;
-      }
-    }
-
-    /* 2.4. If the found-year flag is not set and the date-token matches the
-     * year production, set the found-year flag and set the year-value to the
-     * number denoted by the date-token.  Skip the remaining sub-steps and
-     * continue to the next date-token.
-     */
-    if (year === null) {
-      // "year = 2*4DIGIT ( non-digit *OCTET )"
-      result = parseDigits(token, 2, 4, true);
-      if (result !== null) {
-        year = result;
-        /* From S5.1.1:
-         * 3.  If the year-value is greater than or equal to 70 and less
-         * than or equal to 99, increment the year-value by 1900.
-         * 4.  If the year-value is greater than or equal to 0 and less
-         * than or equal to 69, increment the year-value by 2000.
-         */
-        if (year >= 70 && year <= 99) {
-          year += 1900;
-        } else if (year >= 0 && year <= 69) {
-          year += 2000;
-        }
-      }
-    }
-  }
-
-  /* RFC 6265 S5.1.1
-   * "5. Abort these steps and fail to parse the cookie-date if:
-   *     *  at least one of the found-day-of-month, found-month, found-
-   *        year, or found-time flags is not set,
-   *     *  the day-of-month-value is less than 1 or greater than 31,
-   *     *  the year-value is less than 1601,
-   *     *  the hour-value is greater than 23,
-   *     *  the minute-value is greater than 59, or
-   *     *  the second-value is greater than 59.
-   *     (Note that leap seconds cannot be represented in this syntax.)"
-   *
-   * So, in order as above:
-   */
-  if (
-    dayOfMonth === null || month === null || year === null || second === null ||
-    dayOfMonth < 1 || dayOfMonth > 31 ||
-    year < 1601 ||
-    hour > 23 ||
-    minute > 59 ||
-    second > 59
-  ) {
-    return;
-  }
-
-  return new Date(Date.UTC(year, month, dayOfMonth, hour, minute, second));
-}
-
-function formatDate(date) {
-  var d = date.getUTCDate(); d = d >= 10 ? d : '0'+d;
-  var h = date.getUTCHours(); h = h >= 10 ? h : '0'+h;
-  var m = date.getUTCMinutes(); m = m >= 10 ? m : '0'+m;
-  var s = date.getUTCSeconds(); s = s >= 10 ? s : '0'+s;
-  return NUM_TO_DAY[date.getUTCDay()] + ', ' +
-    d+' '+ NUM_TO_MONTH[date.getUTCMonth()] +' '+ date.getUTCFullYear() +' '+
-    h+':'+m+':'+s+' GMT';
-}
-
-// S5.1.2 Canonicalized Host Names
-function canonicalDomain(str) {
-  if (str == null) {
-    return null;
-  }
-  str = str.trim().replace(/^\./,''); // S4.1.2.3 & S5.2.3: ignore leading .
-
-  // convert to IDN if any non-ASCII characters
-  if (punycode && /[^\u0001-\u007f]/.test(str)) {
-    str = punycode.toASCII(str);
-  }
-
-  return str.toLowerCase();
-}
-
-// S5.1.3 Domain Matching
-function domainMatch(str, domStr, canonicalize) {
-  if (str == null || domStr == null) {
-    return null;
-  }
-  if (canonicalize !== false) {
-    str = canonicalDomain(str);
-    domStr = canonicalDomain(domStr);
-  }
-
-  /*
-   * "The domain string and the string are identical. (Note that both the
-   * domain string and the string will have been canonicalized to lower case at
-   * this point)"
-   */
-  if (str == domStr) {
-    return true;
-  }
-
-  /* "All of the following [three] conditions hold:" (order adjusted from the RFC) */
-
-  /* "* The string is a host name (i.e., not an IP address)." */
-  if (net.isIP(str)) {
-    return false;
-  }
-
-  /* "* The domain string is a suffix of the string" */
-  var idx = str.indexOf(domStr);
-  if (idx <= 0) {
-    return false; // it's a non-match (-1) or prefix (0)
-  }
-
-  // e.g "a.b.c".indexOf("b.c") === 2
-  // 5 === 3+2
-  if (str.length !== domStr.length + idx) { // it's not a suffix
-    return false;
-  }
-
-  /* "* The last character of the string that is not included in the domain
-  * string is a %x2E (".") character." */
-  if (str.substr(idx-1,1) !== '.') {
-    return false;
-  }
-
-  return true;
-}
-
-
-// RFC6265 S5.1.4 Paths and Path-Match
-
-/*
- * "The user agent MUST use an algorithm equivalent to the following algorithm
- * to compute the default-path of a cookie:"
- *
- * Assumption: the path (and not query part or absolute uri) is passed in.
- */
-function defaultPath(path) {
-  // "2. If the uri-path is empty or if the first character of the uri-path is not
-  // a %x2F ("/") character, output %x2F ("/") and skip the remaining steps.
-  if (!path || path.substr(0,1) !== "/") {
-    return "/";
-  }
-
-  // "3. If the uri-path contains no more than one %x2F ("/") character, output
-  // %x2F ("/") and skip the remaining step."
-  if (path === "/") {
-    return path;
-  }
-
-  var rightSlash = path.lastIndexOf("/");
-  if (rightSlash === 0) {
-    return "/";
-  }
-
-  // "4. Output the characters of the uri-path from the first character up to,
-  // but not including, the right-most %x2F ("/")."
-  return path.slice(0, rightSlash);
-}
-
-function trimTerminator(str) {
-  for (var t = 0; t < TERMINATORS.length; t++) {
-    var terminatorIdx = str.indexOf(TERMINATORS[t]);
-    if (terminatorIdx !== -1) {
-      str = str.substr(0,terminatorIdx);
-    }
-  }
-
-  return str;
-}
-
-function parseCookiePair(cookiePair, looseMode) {
-  cookiePair = trimTerminator(cookiePair);
-
-  var firstEq = cookiePair.indexOf('=');
-  if (looseMode) {
-    if (firstEq === 0) { // '=' is immediately at start
-      cookiePair = cookiePair.substr(1);
-      firstEq = cookiePair.indexOf('='); // might still need to split on '='
-    }
-  } else { // non-loose mode
-    if (firstEq <= 0) { // no '=' or is at start
-      return; // needs to have non-empty "cookie-name"
-    }
-  }
-
-  var cookieName, cookieValue;
-  if (firstEq <= 0) {
-    cookieName = "";
-    cookieValue = cookiePair.trim();
-  } else {
-    cookieName = cookiePair.substr(0, firstEq).trim();
-    cookieValue = cookiePair.substr(firstEq+1).trim();
-  }
-
-  if (CONTROL_CHARS.test(cookieName) || CONTROL_CHARS.test(cookieValue)) {
-    return;
-  }
-
-  var c = new Cookie();
-  c.key = cookieName;
-  c.value = cookieValue;
-  return c;
-}
-
-function parse(str, options) {
-  if (!options || typeof options !== 'object') {
-    options = {};
-  }
-  str = str.trim();
-
-  // We use a regex to parse the "name-value-pair" part of S5.2
-  var firstSemi = str.indexOf(';'); // S5.2 step 1
-  var cookiePair = (firstSemi === -1) ? str : str.substr(0, firstSemi);
-  var c = parseCookiePair(cookiePair, !!options.loose);
-  if (!c) {
-    return;
-  }
-
-  if (firstSemi === -1) {
-    return c;
-  }
-
-  // S5.2.3 "unparsed-attributes consist of the remainder of the set-cookie-string
-  // (including the %x3B (";") in question)." plus later on in the same section
-  // "discard the first ";" and trim".
-  var unparsed = str.slice(firstSemi + 1).trim();
-
-  // "If the unparsed-attributes string is empty, skip the rest of these
-  // steps."
-  if (unparsed.length === 0) {
-    return c;
-  }
-
-  /*
-   * S5.2 says that when looping over the items "[p]rocess the attribute-name
-   * and attribute-value according to the requirements in the following
-   * subsections" for every item.  Plus, for many of the individual attributes
-   * in S5.3 it says to use the "attribute-value of the last attribute in the
-   * cookie-attribute-list".  Therefore, in this implementation, we overwrite
-   * the previous value.
-   */
-  var cookie_avs = unparsed.split(';');
-  while (cookie_avs.length) {
-    var av = cookie_avs.shift().trim();
-    if (av.length === 0) { // happens if ";;" appears
-      continue;
-    }
-    var av_sep = av.indexOf('=');
-    var av_key, av_value;
-
-    if (av_sep === -1) {
-      av_key = av;
-      av_value = null;
-    } else {
-      av_key = av.substr(0,av_sep);
-      av_value = av.substr(av_sep+1);
-    }
-
-    av_key = av_key.trim().toLowerCase();
-
-    if (av_value) {
-      av_value = av_value.trim();
-    }
-
-    switch(av_key) {
-    case 'expires': // S5.2.1
-      if (av_value) {
-        var exp = parseDate(av_value);
-        // "If the attribute-value failed to parse as a cookie date, ignore the
-        // cookie-av."
-        if (exp) {
-          // over and underflow not realistically a concern: V8's getTime() seems to
-          // store something larger than a 32-bit time_t (even with 32-bit node)
-          c.expires = exp;
-        }
-      }
-      break;
-
-    case 'max-age': // S5.2.2
-      if (av_value) {
-        // "If the first character of the attribute-value is not a DIGIT or a "-"
-        // character ...[or]... If the remainder of attribute-value contains a
-        // non-DIGIT character, ignore the cookie-av."
-        if (/^-?[0-9]+$/.test(av_value)) {
-          var delta = parseInt(av_value, 10);
-          // "If delta-seconds is less than or equal to zero (0), let expiry-time
-          // be the earliest representable date and time."
-          c.setMaxAge(delta);
-        }
-      }
-      break;
-
-    case 'domain': // S5.2.3
-      // "If the attribute-value is empty, the behavior is undefined.  However,
-      // the user agent SHOULD ignore the cookie-av entirely."
-      if (av_value) {
-        // S5.2.3 "Let cookie-domain be the attribute-value without the leading %x2E
-        // (".") character."
-        var domain = av_value.trim().replace(/^\./, '');
-        if (domain) {
-          // "Convert the cookie-domain to lower case."
-          c.domain = domain.toLowerCase();
-        }
-      }
-      break;
-
-    case 'path': // S5.2.4
-      /*
-       * "If the attribute-value is empty or if the first character of the
-       * attribute-value is not %x2F ("/"):
-       *   Let cookie-path be the default-path.
-       * Otherwise:
-       *   Let cookie-path be the attribute-value."
-       *
-       * We'll represent the default-path as null since it depends on the
-       * context of the parsing.
-       */
-      c.path = av_value && av_value[0] === "/" ? av_value : null;
-      break;
-
-    case 'secure': // S5.2.5
-      /*
-       * "If the attribute-name case-insensitively matches the string "Secure",
-       * the user agent MUST append an attribute to the cookie-attribute-list
-       * with an attribute-name of Secure and an empty attribute-value."
-       */
-      c.secure = true;
-      break;
-
-    case 'httponly': // S5.2.6 -- effectively the same as 'secure'
-      c.httpOnly = true;
-      break;
-
-    default:
-      c.extensions = c.extensions || [];
-      c.extensions.push(av);
-      break;
-    }
-  }
-
-  return c;
-}
-
-// avoid the V8 deoptimization monster!
-function jsonParse(str) {
-  var obj;
-  try {
-    obj = JSON.parse(str);
-  } catch (e) {
-    return e;
-  }
-  return obj;
-}
-
-function fromJSON(str) {
-  if (!str) {
-    return null;
-  }
-
-  var obj;
-  if (typeof str === 'string') {
-    obj = jsonParse(str);
-    if (obj instanceof Error) {
-      return null;
-    }
-  } else {
-    // assume it's an Object
-    obj = str;
-  }
-
-  var c = new Cookie();
-  for (var i=0; i<Cookie.serializableProperties.length; i++) {
-    var prop = Cookie.serializableProperties[i];
-    if (obj[prop] === undefined ||
-        obj[prop] === Cookie.prototype[prop])
-    {
-      continue; // leave as prototype default
-    }
-
-    if (prop === 'expires' ||
-        prop === 'creation' ||
-        prop === 'lastAccessed')
-    {
-      if (obj[prop] === null) {
-        c[prop] = null;
-      } else {
-        c[prop] = obj[prop] == "Infinity" ?
-          "Infinity" : new Date(obj[prop]);
-      }
-    } else {
-      c[prop] = obj[prop];
-    }
-  }
-
-  return c;
-}
-
-/* Section 5.4 part 2:
- * "*  Cookies with longer paths are listed before cookies with
- *     shorter paths.
- *
- *  *  Among cookies that have equal-length path fields, cookies with
- *     earlier creation-times are listed before cookies with later
- *     creation-times."
- */
-
-function cookieCompare(a,b) {
-  var cmp = 0;
-
-  // descending for length: b CMP a
-  var aPathLen = a.path ? a.path.length : 0;
-  var bPathLen = b.path ? b.path.length : 0;
-  cmp = bPathLen - aPathLen;
-  if (cmp !== 0) {
-    return cmp;
-  }
-
-  // ascending for time: a CMP b
-  var aTime = a.creation ? a.creation.getTime() : MAX_TIME;
-  var bTime = b.creation ? b.creation.getTime() : MAX_TIME;
-  cmp = aTime - bTime;
-  if (cmp !== 0) {
-    return cmp;
-  }
-
-  // break ties for the same millisecond (precision of JavaScript's clock)
-  cmp = a.creationIndex - b.creationIndex;
-
-  return cmp;
-}
-
-// Gives the permutation of all possible pathMatch()es of a given path. The
-// array is in longest-to-shortest order.  Handy for indexing.
-function permutePath(path) {
-  if (path === '/') {
-    return ['/'];
-  }
-  if (path.lastIndexOf('/') === path.length-1) {
-    path = path.substr(0,path.length-1);
-  }
-  var permutations = [path];
-  while (path.length > 1) {
-    var lindex = path.lastIndexOf('/');
-    if (lindex === 0) {
-      break;
-    }
-    path = path.substr(0,lindex);
-    permutations.push(path);
-  }
-  permutations.push('/');
-  return permutations;
-}
-
-function getCookieContext(url) {
-  if (url instanceof Object) {
-    return url;
-  }
-  // NOTE: decodeURI will throw on malformed URIs (see GH-32).
-  // Therefore, we will just skip decoding for such URIs.
-  try {
-    url = decodeURI(url);
-  }
-  catch(err) {
-    // Silently swallow error
-  }
-
-  return urlParse(url);
-}
-
-function Cookie(options) {
-  options = options || {};
-
-  Object.keys(options).forEach(function(prop) {
-    if (Cookie.prototype.hasOwnProperty(prop) &&
-        Cookie.prototype[prop] !== options[prop] &&
-        prop.substr(0,1) !== '_')
-    {
-      this[prop] = options[prop];
-    }
-  }, this);
-
-  this.creation = this.creation || new Date();
-
-  // used to break creation ties in cookieCompare():
-  Object.defineProperty(this, 'creationIndex', {
-    configurable: false,
-    enumerable: false, // important for assert.deepEqual checks
-    writable: true,
-    value: ++Cookie.cookiesCreated
-  });
-}
-
-Cookie.cookiesCreated = 0; // incremented each time a cookie is created
-
-Cookie.parse = parse;
-Cookie.fromJSON = fromJSON;
-
-Cookie.prototype.key = "";
-Cookie.prototype.value = "";
-
-// the order in which the RFC has them:
-Cookie.prototype.expires = "Infinity"; // coerces to literal Infinity
-Cookie.prototype.maxAge = null; // takes precedence over expires for TTL
-Cookie.prototype.domain = null;
-Cookie.prototype.path = null;
-Cookie.prototype.secure = false;
-Cookie.prototype.httpOnly = false;
-Cookie.prototype.extensions = null;
-
-// set by the CookieJar:
-Cookie.prototype.hostOnly = null; // boolean when set
-Cookie.prototype.pathIsDefault = null; // boolean when set
-Cookie.prototype.creation = null; // Date when set; defaulted by Cookie.parse
-Cookie.prototype.lastAccessed = null; // Date when set
-Object.defineProperty(Cookie.prototype, 'creationIndex', {
-  configurable: true,
-  enumerable: false,
-  writable: true,
-  value: 0
-});
-
-Cookie.serializableProperties = Object.keys(Cookie.prototype)
-  .filter(function(prop) {
-    return !(
-      Cookie.prototype[prop] instanceof Function ||
-      prop === 'creationIndex' ||
-      prop.substr(0,1) === '_'
-    );
-  });
-
-Cookie.prototype.inspect = function inspect() {
-  var now = Date.now();
-  return 'Cookie="'+this.toString() +
-    '; hostOnly='+(this.hostOnly != null ? this.hostOnly : '?') +
-    '; aAge='+(this.lastAccessed ? (now-this.lastAccessed.getTime())+'ms' : '?') +
-    '; cAge='+(this.creation ? (now-this.creation.getTime())+'ms' : '?') +
-    '"';
-};
-
-// Use the new custom inspection symbol to add the custom inspect function if
-// available.
-if (util.inspect.custom) {
-  Cookie.prototype[util.inspect.custom] = Cookie.prototype.inspect;
-}
-
-Cookie.prototype.toJSON = function() {
-  var obj = {};
-
-  var props = Cookie.serializableProperties;
-  for (var i=0; i<props.length; i++) {
-    var prop = props[i];
-    if (this[prop] === Cookie.prototype[prop]) {
-      continue; // leave as prototype default
-    }
-
-    if (prop === 'expires' ||
-        prop === 'creation' ||
-        prop === 'lastAccessed')
-    {
-      if (this[prop] === null) {
-        obj[prop] = null;
-      } else {
-        obj[prop] = this[prop] == "Infinity" ? // intentionally not ===
-          "Infinity" : this[prop].toISOString();
-      }
-    } else if (prop === 'maxAge') {
-      if (this[prop] !== null) {
-        // again, intentionally not ===
-        obj[prop] = (this[prop] == Infinity || this[prop] == -Infinity) ?
-          this[prop].toString() : this[prop];
-      }
-    } else {
-      if (this[prop] !== Cookie.prototype[prop]) {
-        obj[prop] = this[prop];
-      }
-    }
-  }
-
-  return obj;
-};
-
-Cookie.prototype.clone = function() {
-  return fromJSON(this.toJSON());
-};
-
-Cookie.prototype.validate = function validate() {
-  if (!COOKIE_OCTETS.test(this.value)) {
-    return false;
-  }
-  if (this.expires != Infinity && !(this.expires instanceof Date) && !parseDate(this.expires)) {
-    return false;
-  }
-  if (this.maxAge != null && this.maxAge <= 0) {
-    return false; // "Max-Age=" non-zero-digit *DIGIT
-  }
-  if (this.path != null && !PATH_VALUE.test(this.path)) {
-    return false;
-  }
-
-  var cdomain = this.cdomain();
-  if (cdomain) {
-    if (cdomain.match(/\.$/)) {
-      return false; // S4.1.2.3 suggests that this is bad. domainMatch() tests confirm this
-    }
-    var suffix = pubsuffix.getPublicSuffix(cdomain);
-    if (suffix == null) { // it's a public suffix
-      return false;
-    }
-  }
-  return true;
-};
-
-Cookie.prototype.setExpires = function setExpires(exp) {
-  if (exp instanceof Date) {
-    this.expires = exp;
-  } else {
-    this.expires = parseDate(exp) || "Infinity";
-  }
-};
-
-Cookie.prototype.setMaxAge = function setMaxAge(age) {
-  if (age === Infinity || age === -Infinity) {
-    this.maxAge = age.toString(); // so JSON.stringify() works
-  } else {
-    this.maxAge = age;
-  }
-};
-
-// gives Cookie header format
-Cookie.prototype.cookieString = function cookieString() {
-  var val = this.value;
-  if (val == null) {
-    val = '';
-  }
-  if (this.key === '') {
-    return val;
-  }
-  return this.key+'='+val;
-};
-
-// gives Set-Cookie header format
-Cookie.prototype.toString = function toString() {
-  var str = this.cookieString();
-
-  if (this.expires != Infinity) {
-    if (this.expires instanceof Date) {
-      str += '; Expires='+formatDate(this.expires);
-    } else {
-      str += '; Expires='+this.expires;
-    }
-  }
-
-  if (this.maxAge != null && this.maxAge != Infinity) {
-    str += '; Max-Age='+this.maxAge;
-  }
-
-  if (this.domain && !this.hostOnly) {
-    str += '; Domain='+this.domain;
-  }
-  if (this.path) {
-    str += '; Path='+this.path;
-  }
-
-  if (this.secure) {
-    str += '; Secure';
-  }
-  if (this.httpOnly) {
-    str += '; HttpOnly';
-  }
-  if (this.extensions) {
-    this.extensions.forEach(function(ext) {
-      str += '; '+ext;
-    });
-  }
-
-  return str;
-};
-
-// TTL() partially replaces the "expiry-time" parts of S5.3 step 3 (setCookie()
-// elsewhere)
-// S5.3 says to give the "latest representable date" for which we use Infinity
-// For "expired" we use 0
-Cookie.prototype.TTL = function TTL(now) {
-  /* RFC6265 S4.1.2.2 If a cookie has both the Max-Age and the Expires
-   * attribute, the Max-Age attribute has precedence and controls the
-   * expiration date of the cookie.
-   * (Concurs with S5.3 step 3)
-   */
-  if (this.maxAge != null) {
-    return this.maxAge<=0 ? 0 : this.maxAge*1000;
-  }
-
-  var expires = this.expires;
-  if (expires != Infinity) {
-    if (!(expires instanceof Date)) {
-      expires = parseDate(expires) || Infinity;
-    }
-
-    if (expires == Infinity) {
-      return Infinity;
-    }
-
-    return expires.getTime() - (now || Date.now());
-  }
-
-  return Infinity;
-};
-
-// expiryTime() replaces the "expiry-time" parts of S5.3 step 3 (setCookie()
-// elsewhere)
-Cookie.prototype.expiryTime = function expiryTime(now) {
-  if (this.maxAge != null) {
-    var relativeTo = now || this.creation || new Date();
-    var age = (this.maxAge <= 0) ? -Infinity : this.maxAge*1000;
-    return relativeTo.getTime() + age;
-  }
-
-  if (this.expires == Infinity) {
-    return Infinity;
-  }
-  return this.expires.getTime();
-};
-
-// expiryDate() replaces the "expiry-time" parts of S5.3 step 3 (setCookie()
-// elsewhere), except it returns a Date
-Cookie.prototype.expiryDate = function expiryDate(now) {
-  var millisec = this.expiryTime(now);
-  if (millisec == Infinity) {
-    return new Date(MAX_TIME);
-  } else if (millisec == -Infinity) {
-    return new Date(MIN_TIME);
-  } else {
-    return new Date(millisec);
-  }
-};
-
-// This replaces the "persistent-flag" parts of S5.3 step 3
-Cookie.prototype.isPersistent = function isPersistent() {
-  return (this.maxAge != null || this.expires != Infinity);
-};
-
-// Mostly S5.1.2 and S5.2.3:
-Cookie.prototype.cdomain =
-Cookie.prototype.canonicalizedDomain = function canonicalizedDomain() {
-  if (this.domain == null) {
-    return null;
-  }
-  return canonicalDomain(this.domain);
-};
-
-function CookieJar(store, options) {
-  if (typeof options === "boolean") {
-    options = {rejectPublicSuffixes: options};
-  } else if (options == null) {
-    options = {};
-  }
-  if (options.rejectPublicSuffixes != null) {
-    this.rejectPublicSuffixes = options.rejectPublicSuffixes;
-  }
-  if (options.looseMode != null) {
-    this.enableLooseMode = options.looseMode;
-  }
-
-  if (!store) {
-    store = new MemoryCookieStore();
-  }
-  this.store = store;
-}
-CookieJar.prototype.store = null;
-CookieJar.prototype.rejectPublicSuffixes = true;
-CookieJar.prototype.enableLooseMode = false;
-var CAN_BE_SYNC = [];
-
-CAN_BE_SYNC.push('setCookie');
-CookieJar.prototype.setCookie = function(cookie, url, options, cb) {
-  var err;
-  var context = getCookieContext(url);
-  if (options instanceof Function) {
-    cb = options;
-    options = {};
-  }
-
-  var host = canonicalDomain(context.hostname);
-  var loose = this.enableLooseMode;
-  if (options.loose != null) {
-    loose = options.loose;
-  }
-
-  // S5.3 step 1
-  if (!(cookie instanceof Cookie)) {
-    cookie = Cookie.parse(cookie, { loose: loose });
-  }
-  if (!cookie) {
-    err = new Error("Cookie failed to parse");
-    return cb(options.ignoreError ? null : err);
-  }
-
-  // S5.3 step 2
-  var now = options.now || new Date(); // will assign later to save effort in the face of errors
-
-  // S5.3 step 3: NOOP; persistent-flag and expiry-time is handled by getCookie()
-
-  // S5.3 step 4: NOOP; domain is null by default
-
-  // S5.3 step 5: public suffixes
-  if (this.rejectPublicSuffixes && cookie.domain) {
-    var suffix = pubsuffix.getPublicSuffix(cookie.cdomain());
-    if (suffix == null) { // e.g. "com"
-      err = new Error("Cookie has domain set to a public suffix");
-      return cb(options.ignoreError ? null : err);
-    }
-  }
-
-  // S5.3 step 6:
-  if (cookie.domain) {
-    if (!domainMatch(host, cookie.cdomain(), false)) {
-      err = new Error("Cookie not in this host's domain. Cookie:"+cookie.cdomain()+" Request:"+host);
-      return cb(options.ignoreError ? null : err);
-    }
-
-    if (cookie.hostOnly == null) { // don't reset if already set
-      cookie.hostOnly = false;
-    }
-
-  } else {
-    cookie.hostOnly = true;
-    cookie.domain = host;
-  }
-
-  //S5.2.4 If the attribute-value is empty or if the first character of the
-  //attribute-value is not %x2F ("/"):
-  //Let cookie-path be the default-path.
-  if (!cookie.path || cookie.path[0] !== '/') {
-    cookie.path = defaultPath(context.pathname);
-    cookie.pathIsDefault = true;
-  }
-
-  // S5.3 step 8: NOOP; secure attribute
-  // S5.3 step 9: NOOP; httpOnly attribute
-
-  // S5.3 step 10
-  if (options.http === false && cookie.httpOnly) {
-    err = new Error("Cookie is HttpOnly and this isn't an HTTP API");
-    return cb(options.ignoreError ? null : err);
-  }
-
-  var store = this.store;
-
-  if (!store.updateCookie) {
-    store.updateCookie = function(oldCookie, newCookie, cb) {
-      this.putCookie(newCookie, cb);
-    };
-  }
-
-  function withCookie(err, oldCookie) {
-    if (err) {
-      return cb(err);
-    }
-
-    var next = function(err) {
-      if (err) {
-        return cb(err);
-      } else {
-        cb(null, cookie);
-      }
-    };
-
-    if (oldCookie) {
-      // S5.3 step 11 - "If the cookie store contains a cookie with the same name,
-      // domain, and path as the newly created cookie:"
-      if (options.http === false && oldCookie.httpOnly) { // step 11.2
-        err = new Error("old Cookie is HttpOnly and this isn't an HTTP API");
-        return cb(options.ignoreError ? null : err);
-      }
-      cookie.creation = oldCookie.creation; // step 11.3
-      cookie.creationIndex = oldCookie.creationIndex; // preserve tie-breaker
-      cookie.lastAccessed = now;
-      // Step 11.4 (delete cookie) is implied by just setting the new one:
-      store.updateCookie(oldCookie, cookie, next); // step 12
-
-    } else {
-      cookie.creation = cookie.lastAccessed = now;
-      store.putCookie(cookie, next); // step 12
-    }
-  }
-
-  store.findCookie(cookie.domain, cookie.path, cookie.key, withCookie);
-};
-
-// RFC6365 S5.4
-CAN_BE_SYNC.push('getCookies');
-CookieJar.prototype.getCookies = function(url, options, cb) {
-  var context = getCookieContext(url);
-  if (options instanceof Function) {
-    cb = options;
-    options = {};
-  }
-
-  var host = canonicalDomain(context.hostname);
-  var path = context.pathname || '/';
-
-  var secure = options.secure;
-  if (secure == null && context.protocol &&
-      (context.protocol == 'https:' || context.protocol == 'wss:'))
-  {
-    secure = true;
-  }
-
-  var http = options.http;
-  if (http == null) {
-    http = true;
-  }
-
-  var now = options.now || Date.now();
-  var expireCheck = options.expire !== false;
-  var allPaths = !!options.allPaths;
-  var store = this.store;
-
-  function matchingCookie(c) {
-    // "Either:
-    //   The cookie's host-only-flag is true and the canonicalized
-    //   request-host is identical to the cookie's domain.
-    // Or:
-    //   The cookie's host-only-flag is false and the canonicalized
-    //   request-host domain-matches the cookie's domain."
-    if (c.hostOnly) {
-      if (c.domain != host) {
-        return false;
-      }
-    } else {
-      if (!domainMatch(host, c.domain, false)) {
-        return false;
-      }
-    }
-
-    // "The request-uri's path path-matches the cookie's path."
-    if (!allPaths && !pathMatch(path, c.path)) {
-      return false;
-    }
-
-    // "If the cookie's secure-only-flag is true, then the request-uri's
-    // scheme must denote a "secure" protocol"
-    if (c.secure && !secure) {
-      return false;
-    }
-
-    // "If the cookie's http-only-flag is true, then exclude the cookie if the
-    // cookie-string is being generated for a "non-HTTP" API"
-    if (c.httpOnly && !http) {
-      return false;
-    }
-
-    // deferred from S5.3
-    // non-RFC: allow retention of expired cookies by choice
-    if (expireCheck && c.expiryTime() <= now) {
-      store.removeCookie(c.domain, c.path, c.key, function(){}); // result ignored
-      return false;
-    }
-
-    return true;
-  }
-
-  store.findCookies(host, allPaths ? null : path, function(err,cookies) {
-    if (err) {
-      return cb(err);
-    }
-
-    cookies = cookies.filter(matchingCookie);
-
-    // sorting of S5.4 part 2
-    if (options.sort !== false) {
-      cookies = cookies.sort(cookieCompare);
-    }
-
-    // S5.4 part 3
-    var now = new Date();
-    cookies.forEach(function(c) {
-      c.lastAccessed = now;
-    });
-    // TODO persist lastAccessed
-
-    cb(null,cookies);
-  });
-};
-
-CAN_BE_SYNC.push('getCookieString');
-CookieJar.prototype.getCookieString = function(/*..., cb*/) {
-  var args = Array.prototype.slice.call(arguments,0);
-  var cb = args.pop();
-  var next = function(err,cookies) {
-    if (err) {
-      cb(err);
-    } else {
-      cb(null, cookies
-        .sort(cookieCompare)
-        .map(function(c){
-          return c.cookieString();
-        })
-        .join('; '));
-    }
-  };
-  args.push(next);
-  this.getCookies.apply(this,args);
-};
-
-CAN_BE_SYNC.push('getSetCookieStrings');
-CookieJar.prototype.getSetCookieStrings = function(/*..., cb*/) {
-  var args = Array.prototype.slice.call(arguments,0);
-  var cb = args.pop();
-  var next = function(err,cookies) {
-    if (err) {
-      cb(err);
-    } else {
-      cb(null, cookies.map(function(c){
-        return c.toString();
-      }));
-    }
-  };
-  args.push(next);
-  this.getCookies.apply(this,args);
-};
-
-CAN_BE_SYNC.push('serialize');
-CookieJar.prototype.serialize = function(cb) {
-  var type = this.store.constructor.name;
-  if (type === 'Object') {
-    type = null;
-  }
-
-  // update README.md "Serialization Format" if you change this, please!
-  var serialized = {
-    // The version of tough-cookie that serialized this jar. Generally a good
-    // practice since future versions can make data import decisions based on
-    // known past behavior. When/if this matters, use `semver`.
-    version: 'tough-cookie@'+VERSION,
-
-    // add the store type, to make humans happy:
-    storeType: type,
-
-    // CookieJar configuration:
-    rejectPublicSuffixes: !!this.rejectPublicSuffixes,
-
-    // this gets filled from getAllCookies:
-    cookies: []
-  };
-
-  if (!(this.store.getAllCookies &&
-        typeof this.store.getAllCookies === 'function'))
-  {
-    return cb(new Error('store does not support getAllCookies and cannot be serialized'));
-  }
-
-  this.store.getAllCookies(function(err,cookies) {
-    if (err) {
-      return cb(err);
-    }
-
-    serialized.cookies = cookies.map(function(cookie) {
-      // convert to serialized 'raw' cookies
-      cookie = (cookie instanceof Cookie) ? cookie.toJSON() : cookie;
-
-      // Remove the index so new ones get assigned during deserialization
-      delete cookie.creationIndex;
-
-      return cookie;
-    });
-
-    return cb(null, serialized);
-  });
-};
-
-// well-known name that JSON.stringify calls
-CookieJar.prototype.toJSON = function() {
-  return this.serializeSync();
-};
-
-// use the class method CookieJar.deserialize instead of calling this directly
-CAN_BE_SYNC.push('_importCookies');
-CookieJar.prototype._importCookies = function(serialized, cb) {
-  var jar = this;
-  var cookies = serialized.cookies;
-  if (!cookies || !Array.isArray(cookies)) {
-    return cb(new Error('serialized jar has no cookies array'));
-  }
-  cookies = cookies.slice(); // do not modify the original
-
-  function putNext(err) {
-    if (err) {
-      return cb(err);
-    }
-
-    if (!cookies.length) {
-      return cb(err, jar);
-    }
-
-    var cookie;
-    try {
-      cookie = fromJSON(cookies.shift());
-    } catch (e) {
-      return cb(e);
-    }
-
-    if (cookie === null) {
-      return putNext(null); // skip this cookie
-    }
-
-    jar.store.putCookie(cookie, putNext);
-  }
-
-  putNext();
-};
-
-CookieJar.deserialize = function(strOrObj, store, cb) {
-  if (arguments.length !== 3) {
-    // store is optional
-    cb = store;
-    store = null;
-  }
-
-  var serialized;
-  if (typeof strOrObj === 'string') {
-    serialized = jsonParse(strOrObj);
-    if (serialized instanceof Error) {
-      return cb(serialized);
-    }
-  } else {
-    serialized = strOrObj;
-  }
-
-  var jar = new CookieJar(store, serialized.rejectPublicSuffixes);
-  jar._importCookies(serialized, function(err) {
-    if (err) {
-      return cb(err);
-    }
-    cb(null, jar);
-  });
-};
-
-CookieJar.deserializeSync = function(strOrObj, store) {
-  var serialized = typeof strOrObj === 'string' ?
-    JSON.parse(strOrObj) : strOrObj;
-  var jar = new CookieJar(store, serialized.rejectPublicSuffixes);
-
-  // catch this mistake early:
-  if (!jar.store.synchronous) {
-    throw new Error('CookieJar store is not synchronous; use async API instead.');
-  }
-
-  jar._importCookiesSync(serialized);
-  return jar;
-};
-CookieJar.fromJSON = CookieJar.deserializeSync;
-
-CookieJar.prototype.clone = function(newStore, cb) {
-  if (arguments.length === 1) {
-    cb = newStore;
-    newStore = null;
-  }
-
-  this.serialize(function(err,serialized) {
-    if (err) {
-      return cb(err);
-    }
-    CookieJar.deserialize(serialized, newStore, cb);
-  });
-};
-
-CAN_BE_SYNC.push('removeAllCookies');
-CookieJar.prototype.removeAllCookies = function(cb) {
-  var store = this.store;
-
-  // Check that the store implements its own removeAllCookies(). The default
-  // implementation in Store will immediately call the callback with a "not
-  // implemented" Error.
-  if (store.removeAllCookies instanceof Function &&
-      store.removeAllCookies !== Store.prototype.removeAllCookies)
-  {
-    return store.removeAllCookies(cb);
-  }
-
-  store.getAllCookies(function(err, cookies) {
-    if (err) {
-      return cb(err);
-    }
-
-    if (cookies.length === 0) {
-      return cb(null);
-    }
-
-    var completedCount = 0;
-    var removeErrors = [];
-
-    function removeCookieCb(removeErr) {
-      if (removeErr) {
-        removeErrors.push(removeErr);
-      }
-
-      completedCount++;
-
-      if (completedCount === cookies.length) {
-        return cb(removeErrors.length ? removeErrors[0] : null);
-      }
-    }
-
-    cookies.forEach(function(cookie) {
-      store.removeCookie(cookie.domain, cookie.path, cookie.key, removeCookieCb);
-    });
-  });
-};
-
-CookieJar.prototype._cloneSync = syncWrap('clone');
-CookieJar.prototype.cloneSync = function(newStore) {
-  if (!newStore.synchronous) {
-    throw new Error('CookieJar clone destination store is not synchronous; use async API instead.');
-  }
-  return this._cloneSync(newStore);
-};
-
-// Use a closure to provide a true imperative API for synchronous stores.
-function syncWrap(method) {
-  return function() {
-    if (!this.store.synchronous) {
-      throw new Error('CookieJar store is not synchronous; use async API instead.');
-    }
-
-    var args = Array.prototype.slice.call(arguments);
-    var syncErr, syncResult;
-    args.push(function syncCb(err, result) {
-      syncErr = err;
-      syncResult = result;
-    });
-    this[method].apply(this, args);
-
-    if (syncErr) {
-      throw syncErr;
-    }
-    return syncResult;
-  };
-}
-
-// wrap all declared CAN_BE_SYNC methods in the sync wrapper
-CAN_BE_SYNC.forEach(function(method) {
-  CookieJar.prototype[method+'Sync'] = syncWrap(method);
-});
-
-exports.version = VERSION;
-exports.CookieJar = CookieJar;
-exports.Cookie = Cookie;
-exports.Store = Store;
-exports.MemoryCookieStore = MemoryCookieStore;
-exports.parseDate = parseDate;
-exports.formatDate = formatDate;
-exports.parse = parse;
-exports.fromJSON = fromJSON;
-exports.domainMatch = domainMatch;
-exports.defaultPath = defaultPath;
-exports.pathMatch = pathMatch;
-exports.getPublicSuffix = pubsuffix.getPublicSuffix;
-exports.cookieCompare = cookieCompare;
-exports.permuteDomain = __nccwpck_require__(9695).permuteDomain;
-exports.permutePath = permutePath;
-exports.canonicalDomain = canonicalDomain;
-
-
-/***/ }),
-
-/***/ 6773:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-/*!
- * Copyright (c) 2015, Salesforce.com, Inc.
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- * this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- * this list of conditions and the following disclaimer in the documentation
- * and/or other materials provided with the distribution.
- *
- * 3. Neither the name of Salesforce.com nor the names of its contributors may
- * be used to endorse or promote products derived from this software without
- * specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
-
-var Store = (__nccwpck_require__(5993)/* .Store */ .y);
-var permuteDomain = (__nccwpck_require__(9695).permuteDomain);
-var pathMatch = (__nccwpck_require__(9362)/* .pathMatch */ .U);
-var util = __nccwpck_require__(3837);
-
-function MemoryCookieStore() {
-  Store.call(this);
-  this.idx = {};
-}
-util.inherits(MemoryCookieStore, Store);
-exports.m = MemoryCookieStore;
-MemoryCookieStore.prototype.idx = null;
-
-// Since it's just a struct in RAM, this Store is synchronous
-MemoryCookieStore.prototype.synchronous = true;
-
-// force a default depth:
-MemoryCookieStore.prototype.inspect = function() {
-  return "{ idx: "+util.inspect(this.idx, false, 2)+' }';
-};
-
-// Use the new custom inspection symbol to add the custom inspect function if
-// available.
-if (util.inspect.custom) {
-  MemoryCookieStore.prototype[util.inspect.custom] = MemoryCookieStore.prototype.inspect;
-}
-
-MemoryCookieStore.prototype.findCookie = function(domain, path, key, cb) {
-  if (!this.idx[domain]) {
-    return cb(null,undefined);
-  }
-  if (!this.idx[domain][path]) {
-    return cb(null,undefined);
-  }
-  return cb(null,this.idx[domain][path][key]||null);
-};
-
-MemoryCookieStore.prototype.findCookies = function(domain, path, cb) {
-  var results = [];
-  if (!domain) {
-    return cb(null,[]);
-  }
-
-  var pathMatcher;
-  if (!path) {
-    // null means "all paths"
-    pathMatcher = function matchAll(domainIndex) {
-      for (var curPath in domainIndex) {
-        var pathIndex = domainIndex[curPath];
-        for (var key in pathIndex) {
-          results.push(pathIndex[key]);
-        }
-      }
-    };
-
-  } else {
-    pathMatcher = function matchRFC(domainIndex) {
-       //NOTE: we should use path-match algorithm from S5.1.4 here
-       //(see : https://github.com/ChromiumWebApps/chromium/blob/b3d3b4da8bb94c1b2e061600df106d590fda3620/net/cookies/canonical_cookie.cc#L299)
-       Object.keys(domainIndex).forEach(function (cookiePath) {
-         if (pathMatch(path, cookiePath)) {
-           var pathIndex = domainIndex[cookiePath];
-
-           for (var key in pathIndex) {
-             results.push(pathIndex[key]);
-           }
-         }
-       });
-     };
-  }
-
-  var domains = permuteDomain(domain) || [domain];
-  var idx = this.idx;
-  domains.forEach(function(curDomain) {
-    var domainIndex = idx[curDomain];
-    if (!domainIndex) {
-      return;
-    }
-    pathMatcher(domainIndex);
-  });
-
-  cb(null,results);
-};
-
-MemoryCookieStore.prototype.putCookie = function(cookie, cb) {
-  if (!this.idx[cookie.domain]) {
-    this.idx[cookie.domain] = {};
-  }
-  if (!this.idx[cookie.domain][cookie.path]) {
-    this.idx[cookie.domain][cookie.path] = {};
-  }
-  this.idx[cookie.domain][cookie.path][cookie.key] = cookie;
-  cb(null);
-};
-
-MemoryCookieStore.prototype.updateCookie = function(oldCookie, newCookie, cb) {
-  // updateCookie() may avoid updating cookies that are identical.  For example,
-  // lastAccessed may not be important to some stores and an equality
-  // comparison could exclude that field.
-  this.putCookie(newCookie,cb);
-};
-
-MemoryCookieStore.prototype.removeCookie = function(domain, path, key, cb) {
-  if (this.idx[domain] && this.idx[domain][path] && this.idx[domain][path][key]) {
-    delete this.idx[domain][path][key];
-  }
-  cb(null);
-};
-
-MemoryCookieStore.prototype.removeCookies = function(domain, path, cb) {
-  if (this.idx[domain]) {
-    if (path) {
-      delete this.idx[domain][path];
-    } else {
-      delete this.idx[domain];
-    }
-  }
-  return cb(null);
-};
-
-MemoryCookieStore.prototype.removeAllCookies = function(cb) {
-  this.idx = {};
-  return cb(null);
-}
-
-MemoryCookieStore.prototype.getAllCookies = function(cb) {
-  var cookies = [];
-  var idx = this.idx;
-
-  var domains = Object.keys(idx);
-  domains.forEach(function(domain) {
-    var paths = Object.keys(idx[domain]);
-    paths.forEach(function(path) {
-      var keys = Object.keys(idx[domain][path]);
-      keys.forEach(function(key) {
-        if (key !== null) {
-          cookies.push(idx[domain][path][key]);
-        }
-      });
-    });
-  });
-
-  // Sort by creationIndex so deserializing retains the creation order.
-  // When implementing your own store, this SHOULD retain the order too
-  cookies.sort(function(a,b) {
-    return (a.creationIndex||0) - (b.creationIndex||0);
-  });
-
-  cb(null, cookies);
-};
-
-
-/***/ }),
-
-/***/ 9362:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-/*!
- * Copyright (c) 2015, Salesforce.com, Inc.
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- * this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- * this list of conditions and the following disclaimer in the documentation
- * and/or other materials provided with the distribution.
- *
- * 3. Neither the name of Salesforce.com nor the names of its contributors may
- * be used to endorse or promote products derived from this software without
- * specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
-
-/*
- * "A request-path path-matches a given cookie-path if at least one of the
- * following conditions holds:"
- */
-function pathMatch (reqPath, cookiePath) {
-  // "o  The cookie-path and the request-path are identical."
-  if (cookiePath === reqPath) {
-    return true;
-  }
-
-  var idx = reqPath.indexOf(cookiePath);
-  if (idx === 0) {
-    // "o  The cookie-path is a prefix of the request-path, and the last
-    // character of the cookie-path is %x2F ("/")."
-    if (cookiePath.substr(-1) === "/") {
-      return true;
-    }
-
-    // " o  The cookie-path is a prefix of the request-path, and the first
-    // character of the request-path that is not included in the cookie- path
-    // is a %x2F ("/") character."
-    if (reqPath.substr(cookiePath.length, 1) === "/") {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-exports.U = pathMatch;
-
-
-/***/ }),
-
-/***/ 9695:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-/*!
- * Copyright (c) 2015, Salesforce.com, Inc.
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- * this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- * this list of conditions and the following disclaimer in the documentation
- * and/or other materials provided with the distribution.
- *
- * 3. Neither the name of Salesforce.com nor the names of its contributors may
- * be used to endorse or promote products derived from this software without
- * specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
-
-var pubsuffix = __nccwpck_require__(8014);
-
-// Gives the permutation of all possible domainMatch()es of a given domain. The
-// array is in shortest-to-longest order.  Handy for indexing.
-function permuteDomain (domain) {
-  var pubSuf = pubsuffix.getPublicSuffix(domain);
-  if (!pubSuf) {
-    return null;
-  }
-  if (pubSuf == domain) {
-    return [domain];
-  }
-
-  var prefix = domain.slice(0, -(pubSuf.length + 1)); // ".example.com"
-  var parts = prefix.split('.').reverse();
-  var cur = pubSuf;
-  var permutations = [cur];
-  while (parts.length) {
-    cur = parts.shift() + '.' + cur;
-    permutations.push(cur);
-  }
-  return permutations;
-}
-
-exports.permuteDomain = permuteDomain;
-
-
-/***/ }),
-
-/***/ 8014:
-/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
-
-"use strict";
-/*!
- * Copyright (c) 2018, Salesforce.com, Inc.
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- * this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- * this list of conditions and the following disclaimer in the documentation
- * and/or other materials provided with the distribution.
- *
- * 3. Neither the name of Salesforce.com nor the names of its contributors may
- * be used to endorse or promote products derived from this software without
- * specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
-
-var psl = __nccwpck_require__(9975);
-
-function getPublicSuffix(domain) {
-  return psl.get(domain);
-}
-
-exports.getPublicSuffix = getPublicSuffix;
-
-
-/***/ }),
-
-/***/ 5993:
-/***/ ((__unused_webpack_module, exports) => {
-
-"use strict";
-/*!
- * Copyright (c) 2015, Salesforce.com, Inc.
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice,
- * this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- * this list of conditions and the following disclaimer in the documentation
- * and/or other materials provided with the distribution.
- *
- * 3. Neither the name of Salesforce.com nor the names of its contributors may
- * be used to endorse or promote products derived from this software without
- * specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
-
-/*jshint unused:false */
-
-function Store() {
-}
-exports.y = Store;
-
-// Stores may be synchronous, but are still required to use a
-// Continuation-Passing Style API.  The CookieJar itself will expose a "*Sync"
-// API that converts from synchronous-callbacks to imperative style.
-Store.prototype.synchronous = false;
-
-Store.prototype.findCookie = function(domain, path, key, cb) {
-  throw new Error('findCookie is not implemented');
-};
-
-Store.prototype.findCookies = function(domain, path, cb) {
-  throw new Error('findCookies is not implemented');
-};
-
-Store.prototype.putCookie = function(cookie, cb) {
-  throw new Error('putCookie is not implemented');
-};
-
-Store.prototype.updateCookie = function(oldCookie, newCookie, cb) {
-  // recommended default implementation:
-  // return this.putCookie(newCookie, cb);
-  throw new Error('updateCookie is not implemented');
-};
-
-Store.prototype.removeCookie = function(domain, path, key, cb) {
-  throw new Error('removeCookie is not implemented');
-};
-
-Store.prototype.removeCookies = function(domain, path, cb) {
-  throw new Error('removeCookies is not implemented');
-};
-
-Store.prototype.removeAllCookies = function(cb) {
-  throw new Error('removeAllCookies is not implemented');
-}
-
-Store.prototype.getAllCookies = function(cb) {
-  throw new Error('getAllCookies is not implemented (therefore jar cannot be serialized)');
-};
-
-
-/***/ }),
-
-/***/ 6217:
-/***/ ((module) => {
-
-// generated by genversion
-module.exports = '2.5.0'
-
-
-/***/ }),
-
 /***/ 9513:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -41275,7 +41883,7 @@ var stream = __nccwpck_require__(2781)
 var zlib = __nccwpck_require__(9796)
 var aws2 = __nccwpck_require__(6342)
 var aws4 = __nccwpck_require__(6071)
-var uuid = __nccwpck_require__(824)
+var uuid = (__nccwpck_require__(5840).v4)
 var httpSignature = __nccwpck_require__(2479)
 var mime = __nccwpck_require__(3583)
 var caseless = __nccwpck_require__(5684)
@@ -43536,6 +44144,457 @@ exports.isValid = function (domain) {
 
 /***/ }),
 
+/***/ 9540:
+/***/ ((module) => {
+
+"use strict";
+
+
+/** Highest positive signed 32-bit float value */
+const maxInt = 2147483647; // aka. 0x7FFFFFFF or 2^31-1
+
+/** Bootstring parameters */
+const base = 36;
+const tMin = 1;
+const tMax = 26;
+const skew = 38;
+const damp = 700;
+const initialBias = 72;
+const initialN = 128; // 0x80
+const delimiter = '-'; // '\x2D'
+
+/** Regular expressions */
+const regexPunycode = /^xn--/;
+const regexNonASCII = /[^\0-\x7F]/; // Note: U+007F DEL is excluded too.
+const regexSeparators = /[\x2E\u3002\uFF0E\uFF61]/g; // RFC 3490 separators
+
+/** Error messages */
+const errors = {
+	'overflow': 'Overflow: input needs wider integers to process',
+	'not-basic': 'Illegal input >= 0x80 (not a basic code point)',
+	'invalid-input': 'Invalid input'
+};
+
+/** Convenience shortcuts */
+const baseMinusTMin = base - tMin;
+const floor = Math.floor;
+const stringFromCharCode = String.fromCharCode;
+
+/*--------------------------------------------------------------------------*/
+
+/**
+ * A generic error utility function.
+ * @private
+ * @param {String} type The error type.
+ * @returns {Error} Throws a `RangeError` with the applicable error message.
+ */
+function error(type) {
+	throw new RangeError(errors[type]);
+}
+
+/**
+ * A generic `Array#map` utility function.
+ * @private
+ * @param {Array} array The array to iterate over.
+ * @param {Function} callback The function that gets called for every array
+ * item.
+ * @returns {Array} A new array of values returned by the callback function.
+ */
+function map(array, callback) {
+	const result = [];
+	let length = array.length;
+	while (length--) {
+		result[length] = callback(array[length]);
+	}
+	return result;
+}
+
+/**
+ * A simple `Array#map`-like wrapper to work with domain name strings or email
+ * addresses.
+ * @private
+ * @param {String} domain The domain name or email address.
+ * @param {Function} callback The function that gets called for every
+ * character.
+ * @returns {String} A new string of characters returned by the callback
+ * function.
+ */
+function mapDomain(domain, callback) {
+	const parts = domain.split('@');
+	let result = '';
+	if (parts.length > 1) {
+		// In email addresses, only the domain name should be punycoded. Leave
+		// the local part (i.e. everything up to `@`) intact.
+		result = parts[0] + '@';
+		domain = parts[1];
+	}
+	// Avoid `split(regex)` for IE8 compatibility. See #17.
+	domain = domain.replace(regexSeparators, '\x2E');
+	const labels = domain.split('.');
+	const encoded = map(labels, callback).join('.');
+	return result + encoded;
+}
+
+/**
+ * Creates an array containing the numeric code points of each Unicode
+ * character in the string. While JavaScript uses UCS-2 internally,
+ * this function will convert a pair of surrogate halves (each of which
+ * UCS-2 exposes as separate characters) into a single code point,
+ * matching UTF-16.
+ * @see `punycode.ucs2.encode`
+ * @see <https://mathiasbynens.be/notes/javascript-encoding>
+ * @memberOf punycode.ucs2
+ * @name decode
+ * @param {String} string The Unicode input string (UCS-2).
+ * @returns {Array} The new array of code points.
+ */
+function ucs2decode(string) {
+	const output = [];
+	let counter = 0;
+	const length = string.length;
+	while (counter < length) {
+		const value = string.charCodeAt(counter++);
+		if (value >= 0xD800 && value <= 0xDBFF && counter < length) {
+			// It's a high surrogate, and there is a next character.
+			const extra = string.charCodeAt(counter++);
+			if ((extra & 0xFC00) == 0xDC00) { // Low surrogate.
+				output.push(((value & 0x3FF) << 10) + (extra & 0x3FF) + 0x10000);
+			} else {
+				// It's an unmatched surrogate; only append this code unit, in case the
+				// next code unit is the high surrogate of a surrogate pair.
+				output.push(value);
+				counter--;
+			}
+		} else {
+			output.push(value);
+		}
+	}
+	return output;
+}
+
+/**
+ * Creates a string based on an array of numeric code points.
+ * @see `punycode.ucs2.decode`
+ * @memberOf punycode.ucs2
+ * @name encode
+ * @param {Array} codePoints The array of numeric code points.
+ * @returns {String} The new Unicode string (UCS-2).
+ */
+const ucs2encode = codePoints => String.fromCodePoint(...codePoints);
+
+/**
+ * Converts a basic code point into a digit/integer.
+ * @see `digitToBasic()`
+ * @private
+ * @param {Number} codePoint The basic numeric code point value.
+ * @returns {Number} The numeric value of a basic code point (for use in
+ * representing integers) in the range `0` to `base - 1`, or `base` if
+ * the code point does not represent a value.
+ */
+const basicToDigit = function(codePoint) {
+	if (codePoint >= 0x30 && codePoint < 0x3A) {
+		return 26 + (codePoint - 0x30);
+	}
+	if (codePoint >= 0x41 && codePoint < 0x5B) {
+		return codePoint - 0x41;
+	}
+	if (codePoint >= 0x61 && codePoint < 0x7B) {
+		return codePoint - 0x61;
+	}
+	return base;
+};
+
+/**
+ * Converts a digit/integer into a basic code point.
+ * @see `basicToDigit()`
+ * @private
+ * @param {Number} digit The numeric value of a basic code point.
+ * @returns {Number} The basic code point whose value (when used for
+ * representing integers) is `digit`, which needs to be in the range
+ * `0` to `base - 1`. If `flag` is non-zero, the uppercase form is
+ * used; else, the lowercase form is used. The behavior is undefined
+ * if `flag` is non-zero and `digit` has no uppercase form.
+ */
+const digitToBasic = function(digit, flag) {
+	//  0..25 map to ASCII a..z or A..Z
+	// 26..35 map to ASCII 0..9
+	return digit + 22 + 75 * (digit < 26) - ((flag != 0) << 5);
+};
+
+/**
+ * Bias adaptation function as per section 3.4 of RFC 3492.
+ * https://tools.ietf.org/html/rfc3492#section-3.4
+ * @private
+ */
+const adapt = function(delta, numPoints, firstTime) {
+	let k = 0;
+	delta = firstTime ? floor(delta / damp) : delta >> 1;
+	delta += floor(delta / numPoints);
+	for (/* no initialization */; delta > baseMinusTMin * tMax >> 1; k += base) {
+		delta = floor(delta / baseMinusTMin);
+	}
+	return floor(k + (baseMinusTMin + 1) * delta / (delta + skew));
+};
+
+/**
+ * Converts a Punycode string of ASCII-only symbols to a string of Unicode
+ * symbols.
+ * @memberOf punycode
+ * @param {String} input The Punycode string of ASCII-only symbols.
+ * @returns {String} The resulting string of Unicode symbols.
+ */
+const decode = function(input) {
+	// Don't use UCS-2.
+	const output = [];
+	const inputLength = input.length;
+	let i = 0;
+	let n = initialN;
+	let bias = initialBias;
+
+	// Handle the basic code points: let `basic` be the number of input code
+	// points before the last delimiter, or `0` if there is none, then copy
+	// the first basic code points to the output.
+
+	let basic = input.lastIndexOf(delimiter);
+	if (basic < 0) {
+		basic = 0;
+	}
+
+	for (let j = 0; j < basic; ++j) {
+		// if it's not a basic code point
+		if (input.charCodeAt(j) >= 0x80) {
+			error('not-basic');
+		}
+		output.push(input.charCodeAt(j));
+	}
+
+	// Main decoding loop: start just after the last delimiter if any basic code
+	// points were copied; start at the beginning otherwise.
+
+	for (let index = basic > 0 ? basic + 1 : 0; index < inputLength; /* no final expression */) {
+
+		// `index` is the index of the next character to be consumed.
+		// Decode a generalized variable-length integer into `delta`,
+		// which gets added to `i`. The overflow checking is easier
+		// if we increase `i` as we go, then subtract off its starting
+		// value at the end to obtain `delta`.
+		const oldi = i;
+		for (let w = 1, k = base; /* no condition */; k += base) {
+
+			if (index >= inputLength) {
+				error('invalid-input');
+			}
+
+			const digit = basicToDigit(input.charCodeAt(index++));
+
+			if (digit >= base) {
+				error('invalid-input');
+			}
+			if (digit > floor((maxInt - i) / w)) {
+				error('overflow');
+			}
+
+			i += digit * w;
+			const t = k <= bias ? tMin : (k >= bias + tMax ? tMax : k - bias);
+
+			if (digit < t) {
+				break;
+			}
+
+			const baseMinusT = base - t;
+			if (w > floor(maxInt / baseMinusT)) {
+				error('overflow');
+			}
+
+			w *= baseMinusT;
+
+		}
+
+		const out = output.length + 1;
+		bias = adapt(i - oldi, out, oldi == 0);
+
+		// `i` was supposed to wrap around from `out` to `0`,
+		// incrementing `n` each time, so we'll fix that now:
+		if (floor(i / out) > maxInt - n) {
+			error('overflow');
+		}
+
+		n += floor(i / out);
+		i %= out;
+
+		// Insert `n` at position `i` of the output.
+		output.splice(i++, 0, n);
+
+	}
+
+	return String.fromCodePoint(...output);
+};
+
+/**
+ * Converts a string of Unicode symbols (e.g. a domain name label) to a
+ * Punycode string of ASCII-only symbols.
+ * @memberOf punycode
+ * @param {String} input The string of Unicode symbols.
+ * @returns {String} The resulting Punycode string of ASCII-only symbols.
+ */
+const encode = function(input) {
+	const output = [];
+
+	// Convert the input in UCS-2 to an array of Unicode code points.
+	input = ucs2decode(input);
+
+	// Cache the length.
+	const inputLength = input.length;
+
+	// Initialize the state.
+	let n = initialN;
+	let delta = 0;
+	let bias = initialBias;
+
+	// Handle the basic code points.
+	for (const currentValue of input) {
+		if (currentValue < 0x80) {
+			output.push(stringFromCharCode(currentValue));
+		}
+	}
+
+	const basicLength = output.length;
+	let handledCPCount = basicLength;
+
+	// `handledCPCount` is the number of code points that have been handled;
+	// `basicLength` is the number of basic code points.
+
+	// Finish the basic string with a delimiter unless it's empty.
+	if (basicLength) {
+		output.push(delimiter);
+	}
+
+	// Main encoding loop:
+	while (handledCPCount < inputLength) {
+
+		// All non-basic code points < n have been handled already. Find the next
+		// larger one:
+		let m = maxInt;
+		for (const currentValue of input) {
+			if (currentValue >= n && currentValue < m) {
+				m = currentValue;
+			}
+		}
+
+		// Increase `delta` enough to advance the decoder's <n,i> state to <m,0>,
+		// but guard against overflow.
+		const handledCPCountPlusOne = handledCPCount + 1;
+		if (m - n > floor((maxInt - delta) / handledCPCountPlusOne)) {
+			error('overflow');
+		}
+
+		delta += (m - n) * handledCPCountPlusOne;
+		n = m;
+
+		for (const currentValue of input) {
+			if (currentValue < n && ++delta > maxInt) {
+				error('overflow');
+			}
+			if (currentValue === n) {
+				// Represent delta as a generalized variable-length integer.
+				let q = delta;
+				for (let k = base; /* no condition */; k += base) {
+					const t = k <= bias ? tMin : (k >= bias + tMax ? tMax : k - bias);
+					if (q < t) {
+						break;
+					}
+					const qMinusT = q - t;
+					const baseMinusT = base - t;
+					output.push(
+						stringFromCharCode(digitToBasic(t + qMinusT % baseMinusT, 0))
+					);
+					q = floor(qMinusT / baseMinusT);
+				}
+
+				output.push(stringFromCharCode(digitToBasic(q, 0)));
+				bias = adapt(delta, handledCPCountPlusOne, handledCPCount === basicLength);
+				delta = 0;
+				++handledCPCount;
+			}
+		}
+
+		++delta;
+		++n;
+
+	}
+	return output.join('');
+};
+
+/**
+ * Converts a Punycode string representing a domain name or an email address
+ * to Unicode. Only the Punycoded parts of the input will be converted, i.e.
+ * it doesn't matter if you call it on a string that has already been
+ * converted to Unicode.
+ * @memberOf punycode
+ * @param {String} input The Punycoded domain name or email address to
+ * convert to Unicode.
+ * @returns {String} The Unicode representation of the given Punycode
+ * string.
+ */
+const toUnicode = function(input) {
+	return mapDomain(input, function(string) {
+		return regexPunycode.test(string)
+			? decode(string.slice(4).toLowerCase())
+			: string;
+	});
+};
+
+/**
+ * Converts a Unicode string representing a domain name or an email address to
+ * Punycode. Only the non-ASCII parts of the domain name will be converted,
+ * i.e. it doesn't matter if you call it with a domain that's already in
+ * ASCII.
+ * @memberOf punycode
+ * @param {String} input The domain name or email address to convert, as a
+ * Unicode string.
+ * @returns {String} The Punycode representation of the given domain name or
+ * email address.
+ */
+const toASCII = function(input) {
+	return mapDomain(input, function(string) {
+		return regexNonASCII.test(string)
+			? 'xn--' + encode(string)
+			: string;
+	});
+};
+
+/*--------------------------------------------------------------------------*/
+
+/** Define the public API */
+const punycode = {
+	/**
+	 * A string representing the current Punycode.js version number.
+	 * @memberOf punycode
+	 * @type String
+	 */
+	'version': '2.1.0',
+	/**
+	 * An object of methods to convert from JavaScript's internal character
+	 * representation (UCS-2) to Unicode code points, and back.
+	 * @see <https://mathiasbynens.be/notes/javascript-encoding>
+	 * @memberOf punycode
+	 * @type Object
+	 */
+	'ucs2': {
+		'decode': ucs2decode,
+		'encode': ucs2encode
+	},
+	'decode': decode,
+	'encode': encode,
+	'toASCII': toASCII,
+	'toUnicode': toUnicode
+};
+
+module.exports = punycode;
+
+
+/***/ }),
+
 /***/ 4907:
 /***/ ((module) => {
 
@@ -44212,9 +45271,182 @@ module.exports = {
 
 /***/ }),
 
+/***/ 3319:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+
+var has = Object.prototype.hasOwnProperty
+  , undef;
+
+/**
+ * Decode a URI encoded string.
+ *
+ * @param {String} input The URI encoded string.
+ * @returns {String|Null} The decoded string.
+ * @api private
+ */
+function decode(input) {
+  try {
+    return decodeURIComponent(input.replace(/\+/g, ' '));
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Attempts to encode a given input.
+ *
+ * @param {String} input The string that needs to be encoded.
+ * @returns {String|Null} The encoded string.
+ * @api private
+ */
+function encode(input) {
+  try {
+    return encodeURIComponent(input);
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Simple query string parser.
+ *
+ * @param {String} query The query string that needs to be parsed.
+ * @returns {Object}
+ * @api public
+ */
+function querystring(query) {
+  var parser = /([^=?#&]+)=?([^&]*)/g
+    , result = {}
+    , part;
+
+  while (part = parser.exec(query)) {
+    var key = decode(part[1])
+      , value = decode(part[2]);
+
+    //
+    // Prevent overriding of existing properties. This ensures that build-in
+    // methods like `toString` or __proto__ are not overriden by malicious
+    // querystrings.
+    //
+    // In the case if failed decoding, we want to omit the key/value pairs
+    // from the result.
+    //
+    if (key === null || value === null || key in result) continue;
+    result[key] = value;
+  }
+
+  return result;
+}
+
+/**
+ * Transform a query string to an object.
+ *
+ * @param {Object} obj Object that should be transformed.
+ * @param {String} prefix Optional prefix.
+ * @returns {String}
+ * @api public
+ */
+function querystringify(obj, prefix) {
+  prefix = prefix || '';
+
+  var pairs = []
+    , value
+    , key;
+
+  //
+  // Optionally prefix with a '?' if needed
+  //
+  if ('string' !== typeof prefix) prefix = '?';
+
+  for (key in obj) {
+    if (has.call(obj, key)) {
+      value = obj[key];
+
+      //
+      // Edge cases where we actually want to encode the value to an empty
+      // string instead of the stringified value.
+      //
+      if (!value && (value === null || value === undef || isNaN(value))) {
+        value = '';
+      }
+
+      key = encode(key);
+      value = encode(value);
+
+      //
+      // If we failed to encode the strings, we should bail out as we don't
+      // want to add invalid strings to the query.
+      //
+      if (key === null || value === null) continue;
+      pairs.push(key +'='+ value);
+    }
+  }
+
+  return pairs.length ? prefix + pairs.join('&') : '';
+}
+
+//
+// Expose the module.
+//
+exports.stringify = querystringify;
+exports.parse = querystring;
+
+
+/***/ }),
+
+/***/ 4742:
+/***/ ((module) => {
+
+"use strict";
+
+
+/**
+ * Check if we're required to add a port number.
+ *
+ * @see https://url.spec.whatwg.org/#default-port
+ * @param {Number|String} port Port number we need to check
+ * @param {String} protocol Protocol we need to check against.
+ * @returns {Boolean} Is it a default port for the given protocol
+ * @api private
+ */
+module.exports = function required(port, protocol) {
+  protocol = protocol.split(':')[0];
+  port = +port;
+
+  if (!port) return false;
+
+  switch (protocol) {
+    case 'http':
+    case 'ws':
+    return port !== 80;
+
+    case 'https':
+    case 'wss':
+    return port !== 443;
+
+    case 'ftp':
+    return port !== 21;
+
+    case 'gopher':
+    return port !== 70;
+
+    case 'file':
+    return false;
+  }
+
+  return port !== 0;
+};
+
+
+/***/ }),
+
 /***/ 1867:
 /***/ ((module, exports, __nccwpck_require__) => {
 
+/*! safe-buffer. MIT License. Feross Aboukhadijeh <https://feross.org/opensource> */
 /* eslint-disable node/no-deprecated-api */
 var buffer = __nccwpck_require__(4300)
 var Buffer = buffer.Buffer
@@ -44236,6 +45468,8 @@ if (Buffer.from && Buffer.alloc && Buffer.allocUnsafe && Buffer.allocUnsafeSlow)
 function SafeBuffer (arg, encodingOrOffset, length) {
   return Buffer(arg, encodingOrOffset, length)
 }
+
+SafeBuffer.prototype = Object.create(Buffer.prototype)
 
 // Copy static methods from Buffer
 copyProps(Buffer, SafeBuffer)
@@ -54167,6 +55401,43 @@ nacl.setPRNG = function(fn) {
 
 /***/ }),
 
+/***/ 9046:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+
+exports.fromCallback = function (fn) {
+  return Object.defineProperty(function () {
+    if (typeof arguments[arguments.length - 1] === 'function') fn.apply(this, arguments)
+    else {
+      return new Promise((resolve, reject) => {
+        arguments[arguments.length] = (err, res) => {
+          if (err) return reject(err)
+          resolve(res)
+        }
+        arguments.length++
+        fn.apply(this, arguments)
+      })
+    }
+  }, 'name', { value: fn.name })
+}
+
+exports.fromPromise = function (fn) {
+  return Object.defineProperty(function () {
+    const cb = arguments[arguments.length - 1]
+    if (typeof cb !== 'function') return fn.apply(this, arguments)
+    else {
+      delete arguments[arguments.length - 1]
+      arguments.length--
+      fn.apply(this, arguments).then(r => cb(null, r), cb)
+    }
+  }, 'name', { value: fn.name })
+}
+
+
+/***/ }),
+
 /***/ 20:
 /***/ (function(__unused_webpack_module, exports) {
 
@@ -55616,87 +56887,1246 @@ Object.defineProperty(exports, '__esModule', { value: true });
 
 /***/ }),
 
-/***/ 2707:
-/***/ ((module) => {
+/***/ 5682:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+var required = __nccwpck_require__(4742)
+  , qs = __nccwpck_require__(3319)
+  , controlOrWhitespace = /^[\x00-\x20\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/
+  , CRHTLF = /[\n\r\t]/g
+  , slashes = /^[A-Za-z][A-Za-z0-9+-.]*:\/\//
+  , port = /:\d+$/
+  , protocolre = /^([a-z][a-z0-9.+-]*:)?(\/\/)?([\\/]+)?([\S\s]*)/i
+  , windowsDriveLetter = /^[a-zA-Z]:/;
+
+/**
+ * Remove control characters and whitespace from the beginning of a string.
+ *
+ * @param {Object|String} str String to trim.
+ * @returns {String} A new string representing `str` stripped of control
+ *     characters and whitespace from its beginning.
+ * @public
+ */
+function trimLeft(str) {
+  return (str ? str : '').toString().replace(controlOrWhitespace, '');
+}
+
+/**
+ * These are the parse rules for the URL parser, it informs the parser
+ * about:
+ *
+ * 0. The char it Needs to parse, if it's a string it should be done using
+ *    indexOf, RegExp using exec and NaN means set as current value.
+ * 1. The property we should set when parsing this value.
+ * 2. Indication if it's backwards or forward parsing, when set as number it's
+ *    the value of extra chars that should be split off.
+ * 3. Inherit from location if non existing in the parser.
+ * 4. `toLowerCase` the resulting value.
+ */
+var rules = [
+  ['#', 'hash'],                        // Extract from the back.
+  ['?', 'query'],                       // Extract from the back.
+  function sanitize(address, url) {     // Sanitize what is left of the address
+    return isSpecial(url.protocol) ? address.replace(/\\/g, '/') : address;
+  },
+  ['/', 'pathname'],                    // Extract from the back.
+  ['@', 'auth', 1],                     // Extract from the front.
+  [NaN, 'host', undefined, 1, 1],       // Set left over value.
+  [/:(\d*)$/, 'port', undefined, 1],    // RegExp the back.
+  [NaN, 'hostname', undefined, 1, 1]    // Set left over.
+];
+
+/**
+ * These properties should not be copied or inherited from. This is only needed
+ * for all non blob URL's as a blob URL does not include a hash, only the
+ * origin.
+ *
+ * @type {Object}
+ * @private
+ */
+var ignore = { hash: 1, query: 1 };
+
+/**
+ * The location object differs when your code is loaded through a normal page,
+ * Worker or through a worker using a blob. And with the blobble begins the
+ * trouble as the location object will contain the URL of the blob, not the
+ * location of the page where our code is loaded in. The actual origin is
+ * encoded in the `pathname` so we can thankfully generate a good "default"
+ * location from it so we can generate proper relative URL's again.
+ *
+ * @param {Object|String} loc Optional default location object.
+ * @returns {Object} lolcation object.
+ * @public
+ */
+function lolcation(loc) {
+  var globalVar;
+
+  if (typeof window !== 'undefined') globalVar = window;
+  else if (typeof global !== 'undefined') globalVar = global;
+  else if (typeof self !== 'undefined') globalVar = self;
+  else globalVar = {};
+
+  var location = globalVar.location || {};
+  loc = loc || location;
+
+  var finaldestination = {}
+    , type = typeof loc
+    , key;
+
+  if ('blob:' === loc.protocol) {
+    finaldestination = new Url(unescape(loc.pathname), {});
+  } else if ('string' === type) {
+    finaldestination = new Url(loc, {});
+    for (key in ignore) delete finaldestination[key];
+  } else if ('object' === type) {
+    for (key in loc) {
+      if (key in ignore) continue;
+      finaldestination[key] = loc[key];
+    }
+
+    if (finaldestination.slashes === undefined) {
+      finaldestination.slashes = slashes.test(loc.href);
+    }
+  }
+
+  return finaldestination;
+}
+
+/**
+ * Check whether a protocol scheme is special.
+ *
+ * @param {String} The protocol scheme of the URL
+ * @return {Boolean} `true` if the protocol scheme is special, else `false`
+ * @private
+ */
+function isSpecial(scheme) {
+  return (
+    scheme === 'file:' ||
+    scheme === 'ftp:' ||
+    scheme === 'http:' ||
+    scheme === 'https:' ||
+    scheme === 'ws:' ||
+    scheme === 'wss:'
+  );
+}
+
+/**
+ * @typedef ProtocolExtract
+ * @type Object
+ * @property {String} protocol Protocol matched in the URL, in lowercase.
+ * @property {Boolean} slashes `true` if protocol is followed by "//", else `false`.
+ * @property {String} rest Rest of the URL that is not part of the protocol.
+ */
+
+/**
+ * Extract protocol information from a URL with/without double slash ("//").
+ *
+ * @param {String} address URL we want to extract from.
+ * @param {Object} location
+ * @return {ProtocolExtract} Extracted information.
+ * @private
+ */
+function extractProtocol(address, location) {
+  address = trimLeft(address);
+  address = address.replace(CRHTLF, '');
+  location = location || {};
+
+  var match = protocolre.exec(address);
+  var protocol = match[1] ? match[1].toLowerCase() : '';
+  var forwardSlashes = !!match[2];
+  var otherSlashes = !!match[3];
+  var slashesCount = 0;
+  var rest;
+
+  if (forwardSlashes) {
+    if (otherSlashes) {
+      rest = match[2] + match[3] + match[4];
+      slashesCount = match[2].length + match[3].length;
+    } else {
+      rest = match[2] + match[4];
+      slashesCount = match[2].length;
+    }
+  } else {
+    if (otherSlashes) {
+      rest = match[3] + match[4];
+      slashesCount = match[3].length;
+    } else {
+      rest = match[4]
+    }
+  }
+
+  if (protocol === 'file:') {
+    if (slashesCount >= 2) {
+      rest = rest.slice(2);
+    }
+  } else if (isSpecial(protocol)) {
+    rest = match[4];
+  } else if (protocol) {
+    if (forwardSlashes) {
+      rest = rest.slice(2);
+    }
+  } else if (slashesCount >= 2 && isSpecial(location.protocol)) {
+    rest = match[4];
+  }
+
+  return {
+    protocol: protocol,
+    slashes: forwardSlashes || isSpecial(protocol),
+    slashesCount: slashesCount,
+    rest: rest
+  };
+}
+
+/**
+ * Resolve a relative URL pathname against a base URL pathname.
+ *
+ * @param {String} relative Pathname of the relative URL.
+ * @param {String} base Pathname of the base URL.
+ * @return {String} Resolved pathname.
+ * @private
+ */
+function resolve(relative, base) {
+  if (relative === '') return base;
+
+  var path = (base || '/').split('/').slice(0, -1).concat(relative.split('/'))
+    , i = path.length
+    , last = path[i - 1]
+    , unshift = false
+    , up = 0;
+
+  while (i--) {
+    if (path[i] === '.') {
+      path.splice(i, 1);
+    } else if (path[i] === '..') {
+      path.splice(i, 1);
+      up++;
+    } else if (up) {
+      if (i === 0) unshift = true;
+      path.splice(i, 1);
+      up--;
+    }
+  }
+
+  if (unshift) path.unshift('');
+  if (last === '.' || last === '..') path.push('');
+
+  return path.join('/');
+}
+
+/**
+ * The actual URL instance. Instead of returning an object we've opted-in to
+ * create an actual constructor as it's much more memory efficient and
+ * faster and it pleases my OCD.
+ *
+ * It is worth noting that we should not use `URL` as class name to prevent
+ * clashes with the global URL instance that got introduced in browsers.
+ *
+ * @constructor
+ * @param {String} address URL we want to parse.
+ * @param {Object|String} [location] Location defaults for relative paths.
+ * @param {Boolean|Function} [parser] Parser for the query string.
+ * @private
+ */
+function Url(address, location, parser) {
+  address = trimLeft(address);
+  address = address.replace(CRHTLF, '');
+
+  if (!(this instanceof Url)) {
+    return new Url(address, location, parser);
+  }
+
+  var relative, extracted, parse, instruction, index, key
+    , instructions = rules.slice()
+    , type = typeof location
+    , url = this
+    , i = 0;
+
+  //
+  // The following if statements allows this module two have compatibility with
+  // 2 different API:
+  //
+  // 1. Node.js's `url.parse` api which accepts a URL, boolean as arguments
+  //    where the boolean indicates that the query string should also be parsed.
+  //
+  // 2. The `URL` interface of the browser which accepts a URL, object as
+  //    arguments. The supplied object will be used as default values / fall-back
+  //    for relative paths.
+  //
+  if ('object' !== type && 'string' !== type) {
+    parser = location;
+    location = null;
+  }
+
+  if (parser && 'function' !== typeof parser) parser = qs.parse;
+
+  location = lolcation(location);
+
+  //
+  // Extract protocol information before running the instructions.
+  //
+  extracted = extractProtocol(address || '', location);
+  relative = !extracted.protocol && !extracted.slashes;
+  url.slashes = extracted.slashes || relative && location.slashes;
+  url.protocol = extracted.protocol || location.protocol || '';
+  address = extracted.rest;
+
+  //
+  // When the authority component is absent the URL starts with a path
+  // component.
+  //
+  if (
+    extracted.protocol === 'file:' && (
+      extracted.slashesCount !== 2 || windowsDriveLetter.test(address)) ||
+    (!extracted.slashes &&
+      (extracted.protocol ||
+        extracted.slashesCount < 2 ||
+        !isSpecial(url.protocol)))
+  ) {
+    instructions[3] = [/(.*)/, 'pathname'];
+  }
+
+  for (; i < instructions.length; i++) {
+    instruction = instructions[i];
+
+    if (typeof instruction === 'function') {
+      address = instruction(address, url);
+      continue;
+    }
+
+    parse = instruction[0];
+    key = instruction[1];
+
+    if (parse !== parse) {
+      url[key] = address;
+    } else if ('string' === typeof parse) {
+      index = parse === '@'
+        ? address.lastIndexOf(parse)
+        : address.indexOf(parse);
+
+      if (~index) {
+        if ('number' === typeof instruction[2]) {
+          url[key] = address.slice(0, index);
+          address = address.slice(index + instruction[2]);
+        } else {
+          url[key] = address.slice(index);
+          address = address.slice(0, index);
+        }
+      }
+    } else if ((index = parse.exec(address))) {
+      url[key] = index[1];
+      address = address.slice(0, index.index);
+    }
+
+    url[key] = url[key] || (
+      relative && instruction[3] ? location[key] || '' : ''
+    );
+
+    //
+    // Hostname, host and protocol should be lowercased so they can be used to
+    // create a proper `origin`.
+    //
+    if (instruction[4]) url[key] = url[key].toLowerCase();
+  }
+
+  //
+  // Also parse the supplied query string in to an object. If we're supplied
+  // with a custom parser as function use that instead of the default build-in
+  // parser.
+  //
+  if (parser) url.query = parser(url.query);
+
+  //
+  // If the URL is relative, resolve the pathname against the base URL.
+  //
+  if (
+      relative
+    && location.slashes
+    && url.pathname.charAt(0) !== '/'
+    && (url.pathname !== '' || location.pathname !== '')
+  ) {
+    url.pathname = resolve(url.pathname, location.pathname);
+  }
+
+  //
+  // Default to a / for pathname if none exists. This normalizes the URL
+  // to always have a /
+  //
+  if (url.pathname.charAt(0) !== '/' && isSpecial(url.protocol)) {
+    url.pathname = '/' + url.pathname;
+  }
+
+  //
+  // We should not add port numbers if they are already the default port number
+  // for a given protocol. As the host also contains the port number we're going
+  // override it with the hostname which contains no port number.
+  //
+  if (!required(url.port, url.protocol)) {
+    url.host = url.hostname;
+    url.port = '';
+  }
+
+  //
+  // Parse down the `auth` for the username and password.
+  //
+  url.username = url.password = '';
+
+  if (url.auth) {
+    index = url.auth.indexOf(':');
+
+    if (~index) {
+      url.username = url.auth.slice(0, index);
+      url.username = encodeURIComponent(decodeURIComponent(url.username));
+
+      url.password = url.auth.slice(index + 1);
+      url.password = encodeURIComponent(decodeURIComponent(url.password))
+    } else {
+      url.username = encodeURIComponent(decodeURIComponent(url.auth));
+    }
+
+    url.auth = url.password ? url.username +':'+ url.password : url.username;
+  }
+
+  url.origin = url.protocol !== 'file:' && isSpecial(url.protocol) && url.host
+    ? url.protocol +'//'+ url.host
+    : 'null';
+
+  //
+  // The href is just the compiled result.
+  //
+  url.href = url.toString();
+}
+
+/**
+ * This is convenience method for changing properties in the URL instance to
+ * insure that they all propagate correctly.
+ *
+ * @param {String} part          Property we need to adjust.
+ * @param {Mixed} value          The newly assigned value.
+ * @param {Boolean|Function} fn  When setting the query, it will be the function
+ *                               used to parse the query.
+ *                               When setting the protocol, double slash will be
+ *                               removed from the final url if it is true.
+ * @returns {URL} URL instance for chaining.
+ * @public
+ */
+function set(part, value, fn) {
+  var url = this;
+
+  switch (part) {
+    case 'query':
+      if ('string' === typeof value && value.length) {
+        value = (fn || qs.parse)(value);
+      }
+
+      url[part] = value;
+      break;
+
+    case 'port':
+      url[part] = value;
+
+      if (!required(value, url.protocol)) {
+        url.host = url.hostname;
+        url[part] = '';
+      } else if (value) {
+        url.host = url.hostname +':'+ value;
+      }
+
+      break;
+
+    case 'hostname':
+      url[part] = value;
+
+      if (url.port) value += ':'+ url.port;
+      url.host = value;
+      break;
+
+    case 'host':
+      url[part] = value;
+
+      if (port.test(value)) {
+        value = value.split(':');
+        url.port = value.pop();
+        url.hostname = value.join(':');
+      } else {
+        url.hostname = value;
+        url.port = '';
+      }
+
+      break;
+
+    case 'protocol':
+      url.protocol = value.toLowerCase();
+      url.slashes = !fn;
+      break;
+
+    case 'pathname':
+    case 'hash':
+      if (value) {
+        var char = part === 'pathname' ? '/' : '#';
+        url[part] = value.charAt(0) !== char ? char + value : value;
+      } else {
+        url[part] = value;
+      }
+      break;
+
+    case 'username':
+    case 'password':
+      url[part] = encodeURIComponent(value);
+      break;
+
+    case 'auth':
+      var index = value.indexOf(':');
+
+      if (~index) {
+        url.username = value.slice(0, index);
+        url.username = encodeURIComponent(decodeURIComponent(url.username));
+
+        url.password = value.slice(index + 1);
+        url.password = encodeURIComponent(decodeURIComponent(url.password));
+      } else {
+        url.username = encodeURIComponent(decodeURIComponent(value));
+      }
+  }
+
+  for (var i = 0; i < rules.length; i++) {
+    var ins = rules[i];
+
+    if (ins[4]) url[ins[1]] = url[ins[1]].toLowerCase();
+  }
+
+  url.auth = url.password ? url.username +':'+ url.password : url.username;
+
+  url.origin = url.protocol !== 'file:' && isSpecial(url.protocol) && url.host
+    ? url.protocol +'//'+ url.host
+    : 'null';
+
+  url.href = url.toString();
+
+  return url;
+}
+
+/**
+ * Transform the properties back in to a valid and full URL string.
+ *
+ * @param {Function} stringify Optional query stringify function.
+ * @returns {String} Compiled version of the URL.
+ * @public
+ */
+function toString(stringify) {
+  if (!stringify || 'function' !== typeof stringify) stringify = qs.stringify;
+
+  var query
+    , url = this
+    , host = url.host
+    , protocol = url.protocol;
+
+  if (protocol && protocol.charAt(protocol.length - 1) !== ':') protocol += ':';
+
+  var result =
+    protocol +
+    ((url.protocol && url.slashes) || isSpecial(url.protocol) ? '//' : '');
+
+  if (url.username) {
+    result += url.username;
+    if (url.password) result += ':'+ url.password;
+    result += '@';
+  } else if (url.password) {
+    result += ':'+ url.password;
+    result += '@';
+  } else if (
+    url.protocol !== 'file:' &&
+    isSpecial(url.protocol) &&
+    !host &&
+    url.pathname !== '/'
+  ) {
+    //
+    // Add back the empty userinfo, otherwise the original invalid URL
+    // might be transformed into a valid one with `url.pathname` as host.
+    //
+    result += '@';
+  }
+
+  //
+  // Trailing colon is removed from `url.host` when it is parsed. If it still
+  // ends with a colon, then add back the trailing colon that was removed. This
+  // prevents an invalid URL from being transformed into a valid one.
+  //
+  if (host[host.length - 1] === ':' || (port.test(url.hostname) && !url.port)) {
+    host += ':';
+  }
+
+  result += host + url.pathname;
+
+  query = 'object' === typeof url.query ? stringify(url.query) : url.query;
+  if (query) result += '?' !== query.charAt(0) ? '?'+ query : query;
+
+  if (url.hash) result += url.hash;
+
+  return result;
+}
+
+Url.prototype = { set: set, toString: toString };
+
+//
+// Expose the URL parser and some additional properties that might be useful for
+// others or testing.
+//
+Url.extractProtocol = extractProtocol;
+Url.location = lolcation;
+Url.trimLeft = trimLeft;
+Url.qs = qs;
+
+module.exports = Url;
+
+
+/***/ }),
+
+/***/ 5840:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+Object.defineProperty(exports, "v1", ({
+  enumerable: true,
+  get: function () {
+    return _v.default;
+  }
+}));
+Object.defineProperty(exports, "v3", ({
+  enumerable: true,
+  get: function () {
+    return _v2.default;
+  }
+}));
+Object.defineProperty(exports, "v4", ({
+  enumerable: true,
+  get: function () {
+    return _v3.default;
+  }
+}));
+Object.defineProperty(exports, "v5", ({
+  enumerable: true,
+  get: function () {
+    return _v4.default;
+  }
+}));
+Object.defineProperty(exports, "NIL", ({
+  enumerable: true,
+  get: function () {
+    return _nil.default;
+  }
+}));
+Object.defineProperty(exports, "version", ({
+  enumerable: true,
+  get: function () {
+    return _version.default;
+  }
+}));
+Object.defineProperty(exports, "validate", ({
+  enumerable: true,
+  get: function () {
+    return _validate.default;
+  }
+}));
+Object.defineProperty(exports, "stringify", ({
+  enumerable: true,
+  get: function () {
+    return _stringify.default;
+  }
+}));
+Object.defineProperty(exports, "parse", ({
+  enumerable: true,
+  get: function () {
+    return _parse.default;
+  }
+}));
+
+var _v = _interopRequireDefault(__nccwpck_require__(8628));
+
+var _v2 = _interopRequireDefault(__nccwpck_require__(6409));
+
+var _v3 = _interopRequireDefault(__nccwpck_require__(5122));
+
+var _v4 = _interopRequireDefault(__nccwpck_require__(9120));
+
+var _nil = _interopRequireDefault(__nccwpck_require__(5332));
+
+var _version = _interopRequireDefault(__nccwpck_require__(1595));
+
+var _validate = _interopRequireDefault(__nccwpck_require__(6900));
+
+var _stringify = _interopRequireDefault(__nccwpck_require__(8950));
+
+var _parse = _interopRequireDefault(__nccwpck_require__(2746));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+/***/ }),
+
+/***/ 4569:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = void 0;
+
+var _crypto = _interopRequireDefault(__nccwpck_require__(6113));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+function md5(bytes) {
+  if (Array.isArray(bytes)) {
+    bytes = Buffer.from(bytes);
+  } else if (typeof bytes === 'string') {
+    bytes = Buffer.from(bytes, 'utf8');
+  }
+
+  return _crypto.default.createHash('md5').update(bytes).digest();
+}
+
+var _default = md5;
+exports["default"] = _default;
+
+/***/ }),
+
+/***/ 5332:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = void 0;
+var _default = '00000000-0000-0000-0000-000000000000';
+exports["default"] = _default;
+
+/***/ }),
+
+/***/ 2746:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = void 0;
+
+var _validate = _interopRequireDefault(__nccwpck_require__(6900));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+function parse(uuid) {
+  if (!(0, _validate.default)(uuid)) {
+    throw TypeError('Invalid UUID');
+  }
+
+  let v;
+  const arr = new Uint8Array(16); // Parse ########-....-....-....-............
+
+  arr[0] = (v = parseInt(uuid.slice(0, 8), 16)) >>> 24;
+  arr[1] = v >>> 16 & 0xff;
+  arr[2] = v >>> 8 & 0xff;
+  arr[3] = v & 0xff; // Parse ........-####-....-....-............
+
+  arr[4] = (v = parseInt(uuid.slice(9, 13), 16)) >>> 8;
+  arr[5] = v & 0xff; // Parse ........-....-####-....-............
+
+  arr[6] = (v = parseInt(uuid.slice(14, 18), 16)) >>> 8;
+  arr[7] = v & 0xff; // Parse ........-....-....-####-............
+
+  arr[8] = (v = parseInt(uuid.slice(19, 23), 16)) >>> 8;
+  arr[9] = v & 0xff; // Parse ........-....-....-....-############
+  // (Use "/" to avoid 32-bit truncation when bit-shifting high-order bytes)
+
+  arr[10] = (v = parseInt(uuid.slice(24, 36), 16)) / 0x10000000000 & 0xff;
+  arr[11] = v / 0x100000000 & 0xff;
+  arr[12] = v >>> 24 & 0xff;
+  arr[13] = v >>> 16 & 0xff;
+  arr[14] = v >>> 8 & 0xff;
+  arr[15] = v & 0xff;
+  return arr;
+}
+
+var _default = parse;
+exports["default"] = _default;
+
+/***/ }),
+
+/***/ 814:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = void 0;
+var _default = /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000)$/i;
+exports["default"] = _default;
+
+/***/ }),
+
+/***/ 807:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = rng;
+
+var _crypto = _interopRequireDefault(__nccwpck_require__(6113));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+const rnds8Pool = new Uint8Array(256); // # of random values to pre-allocate
+
+let poolPtr = rnds8Pool.length;
+
+function rng() {
+  if (poolPtr > rnds8Pool.length - 16) {
+    _crypto.default.randomFillSync(rnds8Pool);
+
+    poolPtr = 0;
+  }
+
+  return rnds8Pool.slice(poolPtr, poolPtr += 16);
+}
+
+/***/ }),
+
+/***/ 5274:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = void 0;
+
+var _crypto = _interopRequireDefault(__nccwpck_require__(6113));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+function sha1(bytes) {
+  if (Array.isArray(bytes)) {
+    bytes = Buffer.from(bytes);
+  } else if (typeof bytes === 'string') {
+    bytes = Buffer.from(bytes, 'utf8');
+  }
+
+  return _crypto.default.createHash('sha1').update(bytes).digest();
+}
+
+var _default = sha1;
+exports["default"] = _default;
+
+/***/ }),
+
+/***/ 8950:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = void 0;
+
+var _validate = _interopRequireDefault(__nccwpck_require__(6900));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 /**
  * Convert array of 16 byte values to UUID string format of the form:
  * XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
  */
-var byteToHex = [];
-for (var i = 0; i < 256; ++i) {
-  byteToHex[i] = (i + 0x100).toString(16).substr(1);
+const byteToHex = [];
+
+for (let i = 0; i < 256; ++i) {
+  byteToHex.push((i + 0x100).toString(16).substr(1));
 }
 
-function bytesToUuid(buf, offset) {
-  var i = offset || 0;
-  var bth = byteToHex;
-  // join used to fix memory issue caused by concatenation: https://bugs.chromium.org/p/v8/issues/detail?id=3175#c4
-  return ([
-    bth[buf[i++]], bth[buf[i++]],
-    bth[buf[i++]], bth[buf[i++]], '-',
-    bth[buf[i++]], bth[buf[i++]], '-',
-    bth[buf[i++]], bth[buf[i++]], '-',
-    bth[buf[i++]], bth[buf[i++]], '-',
-    bth[buf[i++]], bth[buf[i++]],
-    bth[buf[i++]], bth[buf[i++]],
-    bth[buf[i++]], bth[buf[i++]]
-  ]).join('');
+function stringify(arr, offset = 0) {
+  // Note: Be careful editing this code!  It's been tuned for performance
+  // and works in ways you may not expect. See https://github.com/uuidjs/uuid/pull/434
+  const uuid = (byteToHex[arr[offset + 0]] + byteToHex[arr[offset + 1]] + byteToHex[arr[offset + 2]] + byteToHex[arr[offset + 3]] + '-' + byteToHex[arr[offset + 4]] + byteToHex[arr[offset + 5]] + '-' + byteToHex[arr[offset + 6]] + byteToHex[arr[offset + 7]] + '-' + byteToHex[arr[offset + 8]] + byteToHex[arr[offset + 9]] + '-' + byteToHex[arr[offset + 10]] + byteToHex[arr[offset + 11]] + byteToHex[arr[offset + 12]] + byteToHex[arr[offset + 13]] + byteToHex[arr[offset + 14]] + byteToHex[arr[offset + 15]]).toLowerCase(); // Consistency check for valid UUID.  If this throws, it's likely due to one
+  // of the following:
+  // - One or more input array values don't map to a hex octet (leading to
+  // "undefined" in the uuid)
+  // - Invalid input values for the RFC `version` or `variant` fields
+
+  if (!(0, _validate.default)(uuid)) {
+    throw TypeError('Stringified UUID is invalid');
+  }
+
+  return uuid;
 }
 
-module.exports = bytesToUuid;
-
+var _default = stringify;
+exports["default"] = _default;
 
 /***/ }),
 
-/***/ 5859:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+/***/ 8628:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
-// Unique ID creation requires a high quality random # generator.  In node.js
-// this is pretty straight-forward - we use the crypto API.
+"use strict";
 
-var crypto = __nccwpck_require__(6113);
 
-module.exports = function nodeRNG() {
-  return crypto.randomBytes(16);
-};
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = void 0;
 
+var _rng = _interopRequireDefault(__nccwpck_require__(807));
+
+var _stringify = _interopRequireDefault(__nccwpck_require__(8950));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+// **`v1()` - Generate time-based UUID**
+//
+// Inspired by https://github.com/LiosK/UUID.js
+// and http://docs.python.org/library/uuid.html
+let _nodeId;
+
+let _clockseq; // Previous uuid creation time
+
+
+let _lastMSecs = 0;
+let _lastNSecs = 0; // See https://github.com/uuidjs/uuid for API details
+
+function v1(options, buf, offset) {
+  let i = buf && offset || 0;
+  const b = buf || new Array(16);
+  options = options || {};
+  let node = options.node || _nodeId;
+  let clockseq = options.clockseq !== undefined ? options.clockseq : _clockseq; // node and clockseq need to be initialized to random values if they're not
+  // specified.  We do this lazily to minimize issues related to insufficient
+  // system entropy.  See #189
+
+  if (node == null || clockseq == null) {
+    const seedBytes = options.random || (options.rng || _rng.default)();
+
+    if (node == null) {
+      // Per 4.5, create and 48-bit node id, (47 random bits + multicast bit = 1)
+      node = _nodeId = [seedBytes[0] | 0x01, seedBytes[1], seedBytes[2], seedBytes[3], seedBytes[4], seedBytes[5]];
+    }
+
+    if (clockseq == null) {
+      // Per 4.2.2, randomize (14 bit) clockseq
+      clockseq = _clockseq = (seedBytes[6] << 8 | seedBytes[7]) & 0x3fff;
+    }
+  } // UUID timestamps are 100 nano-second units since the Gregorian epoch,
+  // (1582-10-15 00:00).  JSNumbers aren't precise enough for this, so
+  // time is handled internally as 'msecs' (integer milliseconds) and 'nsecs'
+  // (100-nanoseconds offset from msecs) since unix epoch, 1970-01-01 00:00.
+
+
+  let msecs = options.msecs !== undefined ? options.msecs : Date.now(); // Per 4.2.1.2, use count of uuid's generated during the current clock
+  // cycle to simulate higher resolution clock
+
+  let nsecs = options.nsecs !== undefined ? options.nsecs : _lastNSecs + 1; // Time since last uuid creation (in msecs)
+
+  const dt = msecs - _lastMSecs + (nsecs - _lastNSecs) / 10000; // Per 4.2.1.2, Bump clockseq on clock regression
+
+  if (dt < 0 && options.clockseq === undefined) {
+    clockseq = clockseq + 1 & 0x3fff;
+  } // Reset nsecs if clock regresses (new clockseq) or we've moved onto a new
+  // time interval
+
+
+  if ((dt < 0 || msecs > _lastMSecs) && options.nsecs === undefined) {
+    nsecs = 0;
+  } // Per 4.2.1.2 Throw error if too many uuids are requested
+
+
+  if (nsecs >= 10000) {
+    throw new Error("uuid.v1(): Can't create more than 10M uuids/sec");
+  }
+
+  _lastMSecs = msecs;
+  _lastNSecs = nsecs;
+  _clockseq = clockseq; // Per 4.1.4 - Convert from unix epoch to Gregorian epoch
+
+  msecs += 12219292800000; // `time_low`
+
+  const tl = ((msecs & 0xfffffff) * 10000 + nsecs) % 0x100000000;
+  b[i++] = tl >>> 24 & 0xff;
+  b[i++] = tl >>> 16 & 0xff;
+  b[i++] = tl >>> 8 & 0xff;
+  b[i++] = tl & 0xff; // `time_mid`
+
+  const tmh = msecs / 0x100000000 * 10000 & 0xfffffff;
+  b[i++] = tmh >>> 8 & 0xff;
+  b[i++] = tmh & 0xff; // `time_high_and_version`
+
+  b[i++] = tmh >>> 24 & 0xf | 0x10; // include version
+
+  b[i++] = tmh >>> 16 & 0xff; // `clock_seq_hi_and_reserved` (Per 4.2.2 - include variant)
+
+  b[i++] = clockseq >>> 8 | 0x80; // `clock_seq_low`
+
+  b[i++] = clockseq & 0xff; // `node`
+
+  for (let n = 0; n < 6; ++n) {
+    b[i + n] = node[n];
+  }
+
+  return buf || (0, _stringify.default)(b);
+}
+
+var _default = v1;
+exports["default"] = _default;
 
 /***/ }),
 
-/***/ 824:
-/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+/***/ 6409:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
-var rng = __nccwpck_require__(5859);
-var bytesToUuid = __nccwpck_require__(2707);
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = void 0;
+
+var _v = _interopRequireDefault(__nccwpck_require__(5998));
+
+var _md = _interopRequireDefault(__nccwpck_require__(4569));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+const v3 = (0, _v.default)('v3', 0x30, _md.default);
+var _default = v3;
+exports["default"] = _default;
+
+/***/ }),
+
+/***/ 5998:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = _default;
+exports.URL = exports.DNS = void 0;
+
+var _stringify = _interopRequireDefault(__nccwpck_require__(8950));
+
+var _parse = _interopRequireDefault(__nccwpck_require__(2746));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+function stringToBytes(str) {
+  str = unescape(encodeURIComponent(str)); // UTF8 escape
+
+  const bytes = [];
+
+  for (let i = 0; i < str.length; ++i) {
+    bytes.push(str.charCodeAt(i));
+  }
+
+  return bytes;
+}
+
+const DNS = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
+exports.DNS = DNS;
+const URL = '6ba7b811-9dad-11d1-80b4-00c04fd430c8';
+exports.URL = URL;
+
+function _default(name, version, hashfunc) {
+  function generateUUID(value, namespace, buf, offset) {
+    if (typeof value === 'string') {
+      value = stringToBytes(value);
+    }
+
+    if (typeof namespace === 'string') {
+      namespace = (0, _parse.default)(namespace);
+    }
+
+    if (namespace.length !== 16) {
+      throw TypeError('Namespace must be array-like (16 iterable integer values, 0-255)');
+    } // Compute hash of namespace and value, Per 4.3
+    // Future: Use spread syntax when supported on all platforms, e.g. `bytes =
+    // hashfunc([...namespace, ... value])`
+
+
+    let bytes = new Uint8Array(16 + value.length);
+    bytes.set(namespace);
+    bytes.set(value, namespace.length);
+    bytes = hashfunc(bytes);
+    bytes[6] = bytes[6] & 0x0f | version;
+    bytes[8] = bytes[8] & 0x3f | 0x80;
+
+    if (buf) {
+      offset = offset || 0;
+
+      for (let i = 0; i < 16; ++i) {
+        buf[offset + i] = bytes[i];
+      }
+
+      return buf;
+    }
+
+    return (0, _stringify.default)(bytes);
+  } // Function#name is not settable on some platforms (#270)
+
+
+  try {
+    generateUUID.name = name; // eslint-disable-next-line no-empty
+  } catch (err) {} // For CommonJS default export support
+
+
+  generateUUID.DNS = DNS;
+  generateUUID.URL = URL;
+  return generateUUID;
+}
+
+/***/ }),
+
+/***/ 5122:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = void 0;
+
+var _rng = _interopRequireDefault(__nccwpck_require__(807));
+
+var _stringify = _interopRequireDefault(__nccwpck_require__(8950));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 function v4(options, buf, offset) {
-  var i = buf && offset || 0;
-
-  if (typeof(options) == 'string') {
-    buf = options === 'binary' ? new Array(16) : null;
-    options = null;
-  }
   options = options || {};
 
-  var rnds = options.random || (options.rng || rng)();
+  const rnds = options.random || (options.rng || _rng.default)(); // Per 4.4, set bits for version and `clock_seq_hi_and_reserved`
 
-  // Per 4.4, set bits for version and `clock_seq_hi_and_reserved`
-  rnds[6] = (rnds[6] & 0x0f) | 0x40;
-  rnds[8] = (rnds[8] & 0x3f) | 0x80;
 
-  // Copy bytes to buffer, if provided
+  rnds[6] = rnds[6] & 0x0f | 0x40;
+  rnds[8] = rnds[8] & 0x3f | 0x80; // Copy bytes to buffer, if provided
+
   if (buf) {
-    for (var ii = 0; ii < 16; ++ii) {
-      buf[i + ii] = rnds[ii];
+    offset = offset || 0;
+
+    for (let i = 0; i < 16; ++i) {
+      buf[offset + i] = rnds[i];
     }
+
+    return buf;
   }
 
-  return buf || bytesToUuid(rnds);
+  return (0, _stringify.default)(rnds);
 }
 
-module.exports = v4;
+var _default = v4;
+exports["default"] = _default;
 
+/***/ }),
+
+/***/ 9120:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = void 0;
+
+var _v = _interopRequireDefault(__nccwpck_require__(5998));
+
+var _sha = _interopRequireDefault(__nccwpck_require__(5274));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+const v5 = (0, _v.default)('v5', 0x50, _sha.default);
+var _default = v5;
+exports["default"] = _default;
+
+/***/ }),
+
+/***/ 6900:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = void 0;
+
+var _regex = _interopRequireDefault(__nccwpck_require__(814));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+function validate(uuid) {
+  return typeof uuid === 'string' && _regex.default.test(uuid);
+}
+
+var _default = validate;
+exports["default"] = _default;
+
+/***/ }),
+
+/***/ 1595:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports["default"] = void 0;
+
+var _validate = _interopRequireDefault(__nccwpck_require__(6900));
+
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+function version(uuid) {
+  if (!(0, _validate.default)(uuid)) {
+    throw TypeError('Invalid UUID');
+  }
+
+  return parseInt(uuid.substr(14, 1), 16);
+}
+
+var _default = version;
+exports["default"] = _default;
 
 /***/ }),
 
@@ -56326,7 +58756,6 @@ function _interopRequireDefault(obj) {
     "default": obj
   };
 }
-
 module.exports = _interopRequireDefault, module.exports.__esModule = true, module.exports["default"] = module.exports;
 
 /***/ }),
