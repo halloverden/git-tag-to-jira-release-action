@@ -19,5 +19,5 @@ inputs:
     description: "Protocol of your JIRA instance (http/https)"
     default: 'https'
 runs:
-  using: 'node12'
+  using: 'node16'
   main: 'dist/index.js'
