@@ -47,4 +47,3 @@ jobs:
           VALIDATE_JAVASCRIPT_STANDARD: false
           VALIDATE_JSCPD: false
           VALIDATE_TYPESCRIPT_STANDARD: false
-          VALIDATE_CKV2_GHA_1: false
