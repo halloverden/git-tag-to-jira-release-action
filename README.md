@@ -1,4 +1,4 @@
-# Git tag to JIRA release action
+# Git tag to Jira release action
 
 [![GitHub Super-Linter](https://github.com/halloverden/git-tag-to-jira-release-action/actions/workflows/linter.yml/badge.svg)](https://github.com/super-linter/super-linter)
 ![CI](https://github.com/halloverden/git-tag-to-jira-release-action/actions/workflows/ci.yml/badge.svg)
@@ -8,14 +8,14 @@
 
 Creates a Jira release based on a Git tag.
 
-# How it works
+## How it works
 
 1. Finds the latest tag defined on HEAD
 2. Finds all Jira issue keys in the tag message
 3. Creates a release with the tag as name and sets fixVersion on all the issues
    found to this version
 
-# Example action
+## Example action
 
 ```yaml
 name: create-jira-release
