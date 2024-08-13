@@ -36,8 +36,8 @@ export class WrappedJiraClient {
       if (e instanceof AxiosError) {
         core.error(`Couldn't find project`);
         const errors = this.extractJiraErrors(e);
-        errors.forEach(e => {
-          core.error(e);
+        errors.forEach(err => {
+          core.error(err);
         });
       } else {
         core.error(`Couldn't find project ${JSON.stringify(e)}`);
@@ -65,8 +65,8 @@ export class WrappedJiraClient {
       if (e instanceof AxiosError) {
         core.error(`Couldn't create version`);
         const errors = this.extractJiraErrors(e);
-        errors.forEach(e => {
-          core.error(e);
+        errors.forEach(err => {
+          core.error(err);
         });
       } else {
         core.error(`Couldn't create version ${JSON.stringify(e)}`);
@@ -87,8 +87,8 @@ export class WrappedJiraClient {
         if (e instanceof AxiosError) {
           core.warning(`Couldn't update issue '${issue.id}'`);
           const errors = this.extractJiraErrors(e);
-          errors.forEach(e => {
-            core.warning(e);
+          errors.forEach(err => {
+            core.warning(err);
           });
         } else {
           core.warning(
@@ -124,8 +124,8 @@ export class WrappedJiraClient {
         if (e instanceof AxiosError) {
           core.warning(`Couldn't find issue '${issueId}'`);
           const errors = this.extractJiraErrors(e);
-          errors.forEach(e => {
-            core.warning(e);
+          errors.forEach(err => {
+            core.warning(err);
           });
         } else {
           core.warning(
@@ -153,9 +153,9 @@ export class WrappedJiraClient {
   }
 
   private extractJiraErrors(response: AxiosError): string[] {
-    let r: string[] = [];
+    const r: string[] = [];
 
-    let data = response.response?.data;
+    const data = response.response?.data;
 
     if (!this.isJiraErrorResponse(data)) {
       return r;

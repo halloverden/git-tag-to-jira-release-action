@@ -1,16 +1,24 @@
 {
-  "name": "typescript-action",
-  "description": "GitHub Actions TypeScript template",
-  "version": "0.0.0",
-  "author": "",
+  "name": "@halloverden/git-tag-to-jira-release-action",
+  "description": "Git tag to Jira release action",
+  "author": {
+    "name": "Tom Roar Furunes",
+    "email": "tom.roar@halloverden.no"
+  },
+  "contributors": [
+    {
+      "name": "Erich Json Fosse",
+      "email": "erich@halloverden.no"
+    }
+  ],
   "private": true,
-  "homepage": "https://github.com/actions/typescript-action",
+  "homepage": "https://github.com/halloverden/git-tag-to-jira-release-action",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/actions/typescript-action.git"
+    "url": "git+https://github.com/halloverden/git-tag-to-jira-release-action.git"
   },
   "bugs": {
-    "url": "https://github.com/actions/typescript-action/issues"
+    "url": "https://github.com/halloverden/git-tag-to-jira-release-action/issues"
   },
   "keywords": [
     "actions",
