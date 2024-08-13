@@ -1,39 +1,26 @@
 import * as core from '@actions/core'
-import * as gitUtils from './git-utils'
-import {Jira} from './jira'
-import JiraApi from 'jira-client'
+import { wait } from './wait'
 
-async function run(): Promise<void> {
+/**
+ * The main function for the action.
+ * @returns {Promise<void>} Resolves when the action is complete.
+ */
+export async function run(): Promise<void> {
   try {
-    const tag = await gitUtils.findTag()
-    if (null === tag) {
-      core.debug('No tag found')
-      return
-    }
-    core.debug(`Tag: ${tag}`)
+    const ms: string = core.getInput('milliseconds')
 
-    const tagMessage = await gitUtils.findTagMessage(tag)
-    core.debug(`Tag message: '${tagMessage}'`)
+    // Debug logs are only output if the `ACTIONS_STEP_DEBUG` secret is true
+    core.debug(`Waiting ${ms} milliseconds ...`)
 
-    const jira = new Jira()
+    // Log the current timestamp, wait, then log the new timestamp
+    core.debug(new Date().toTimeString())
+    await wait(parseInt(ms, 10))
+    core.debug(new Date().toTimeString())
 
-    let issues: JiraApi.JsonResponse[] = []
-    if (null !== tagMessage) {
-      issues = await jira.findIssuesInString(tagMessage)
-    }
-
-    await jira.createVersionWithIssues(
-      core.getInput('jira_project'),
-      tag,
-      issues
-    )
+    // Set outputs for other workflow steps to use
+    core.setOutput('time', new Date().toTimeString())
   } catch (error) {
-    if (error instanceof Error) {
-      core.setFailed(error.message)
-    } else {
-      throw error
-    }
+    // Fail the workflow run if an error occurs
+    if (error instanceof Error) core.setFailed(error.message)
   }
 }
-
-run()
