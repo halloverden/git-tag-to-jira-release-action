@@ -1,12 +1,14 @@
-<p align="center">
-  <a href="https://github.com/halloverden/git-tag-to-jira-release-action/actions"><img alt="typescript-action status" src="https://github.com/halloverden/git-tag-to-jira-release-action/workflows/build-test/badge.svg"></a>
-</p>
+[![GitHub Super-Linter](https://github.com/halloverden/git-tag-to-jira-release-action/actions/workflows/linter.yml/badge.svg)](https://github.com/super-linter/super-linter)
+![CI](https://github.com/halloverden/git-tag-to-jira-release-action/actions/workflows/ci.yml/badge.svg)
+[![Check dist/](https://github.com/halloverden/git-tag-to-jira-release-action/actions/workflows/check-dist.yml/badge.svg)](https://github.com/halloverden/git-tag-to-jira-release-action/actions/workflows/check-dist.yml)
+[![CodeQL](https://github.com/halloverden/git-tag-to-jira-release-action/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/halloverden/git-tag-to-jira-release-action/actions/workflows/codeql-analysis.yml)
+[![Coverage](./badges/coverage.svg)](./badges/coverage.svg)
 
 # Git tag to JIRA release action
 
 Creates a JIRA release based on a git tag.
 
-# How it works:
+# How it works
 
 1. Finds the latest tag defined on HEAD
 2. Finds all JIRA issue keys in the tag message
