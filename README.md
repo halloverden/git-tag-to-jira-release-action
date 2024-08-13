@@ -1,17 +1,17 @@
+# Git tag to JIRA release action
+
 [![GitHub Super-Linter](https://github.com/halloverden/git-tag-to-jira-release-action/actions/workflows/linter.yml/badge.svg)](https://github.com/super-linter/super-linter)
 ![CI](https://github.com/halloverden/git-tag-to-jira-release-action/actions/workflows/ci.yml/badge.svg)
 [![Check dist/](https://github.com/halloverden/git-tag-to-jira-release-action/actions/workflows/check-dist.yml/badge.svg)](https://github.com/halloverden/git-tag-to-jira-release-action/actions/workflows/check-dist.yml)
 [![CodeQL](https://github.com/halloverden/git-tag-to-jira-release-action/actions/workflows/codeql-analysis.yml/badge.svg)](https://github.com/halloverden/git-tag-to-jira-release-action/actions/workflows/codeql-analysis.yml)
 [![Coverage](./badges/coverage.svg)](./badges/coverage.svg)
 
-# Git tag to JIRA release action
-
-Creates a JIRA release based on a git tag.
+Creates a Jira release based on a Git tag.
 
 # How it works
 
 1. Finds the latest tag defined on HEAD
-2. Finds all JIRA issue keys in the tag message
+2. Finds all Jira issue keys in the tag message
 3. Creates a release with the tag as name and sets fixVersion on all the issues
    found to this version
 
@@ -32,7 +32,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
-      - name: Create JIRA release from git tag
+      - name: Create Jira release from git tag
         uses: halloverden/git-tag-to-jira-release-action@v1
         with:
           jira_host: 'yourcompany.atlassian.net'
