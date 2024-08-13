@@ -1,26 +1,62 @@
-import * as core from '@actions/core'
-import { wait } from './wait'
+import * as core from '@actions/core';
+import * as gitUtils from './git-utils';
+import { WrappedJiraClient } from './wrapped-jira-client';
+import { JiraIssue } from 'ts-jira-client/lib/custom';
 
 /**
  * The main function for the action.
  * @returns {Promise<void>} Resolves when the action is complete.
  */
 export async function run(): Promise<void> {
+  const validateJiraApiVersion = (version: number): version is 1 | 2 | 3 => {
+    return [1, 2, 3].includes(version);
+  };
+
   try {
-    const ms: string = core.getInput('milliseconds')
+    const tag = await gitUtils.findTag();
+    if (null === tag) {
+      core.debug('No tag found');
+      return;
+    }
+    core.debug(`Tag: ${tag}`);
 
-    // Debug logs are only output if the `ACTIONS_STEP_DEBUG` secret is true
-    core.debug(`Waiting ${ms} milliseconds ...`)
+    const tagMessage = await gitUtils.findTagMessage(tag);
+    core.debug(`Tag message: '${tagMessage}'`);
 
-    // Log the current timestamp, wait, then log the new timestamp
-    core.debug(new Date().toTimeString())
-    await wait(parseInt(ms, 10))
-    core.debug(new Date().toTimeString())
+    let jiraApiVersion: 1 | 2 | 3 = 3;
+    const c = parseInt(core.getInput('jira_api_version'), 10);
+    if (validateJiraApiVersion(c)) {
+      jiraApiVersion = c;
+    }
 
-    // Set outputs for other workflow steps to use
-    core.setOutput('time', new Date().toTimeString())
+    const wrappedJiraClient = new WrappedJiraClient({
+      jira: {
+        protocol: 'https',
+        host: core.getInput('jira_host'),
+        username: core.getInput('jira_username'),
+        password: core.getInput('jira_password'),
+        apiVersion: jiraApiVersion
+      }
+    });
+
+    let issues: JiraIssue[] = [];
+    if (null !== tagMessage) {
+      issues = await wrappedJiraClient.findIssuesInString(tagMessage);
+    }
+
+    core.debug(`Found ${issues.length} issue${issues.length ? '' : 's'}`);
+
+    await wrappedJiraClient.createVersionWithIssues(
+      core.getInput('jira_project'),
+      tag,
+      issues
+    );
   } catch (error) {
-    // Fail the workflow run if an error occurs
-    if (error instanceof Error) core.setFailed(error.message)
+    if (error instanceof Error) {
+      core.setFailed(error.message);
+    } else {
+      core.debug(`Error was thrown: ${error}`);
+      throw error;
+    }
   }
 }

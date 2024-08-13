@@ -1,24 +1,24 @@
-name: 'The name of your action here'
-description: 'Provide a description here'
-author: 'Your name or organization here'
-
-# Add your action's branding here. This will appear on the GitHub Marketplace.
-branding:
-  icon: 'heart'
-  color: 'red'
-
-# Define your inputs here.
+name: 'git-tag-to-jira-release'
+description: 'Creates a JIRA release based on a git tag'
+author: 'Hallo Verden'
 inputs:
-  milliseconds:
-    description: 'Your input description here'
+  jira_host:
     required: true
-    default: '1000'
-
-# Define your outputs here.
-outputs:
-  time:
-    description: 'Your output description here'
-
+    description: "hostname of your JIRA instance (eg. yourcompany.atlassian.net)"
+  jira_username:
+    required: true
+    description: "Your JIRA email"
+  jira_password:
+    required: true
+    description: "Your JIRA API token"
+  jira_project:
+    required: true
+    description: 'The JIRA project key'
+  jira_api_version:
+    required: true
+    description: "Jira API version"
+    default: '3'
 runs:
-  using: node20
-  main: dist/index.js
+  using: 'node20'
+  main: 'dist/index.js'
+

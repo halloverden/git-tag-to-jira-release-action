@@ -1,0 +1,25 @@
+name: 'test-jira-release'
+run-name: Creating Jira release for tag ${{ github.ref_name }}
+
+# Controls when the workflow will run
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  create:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      - uses: actions/checkout@v3
+      #      - run: git fetch --depth=1 origin +refs/tags/*:refs/tags/*
+      - name: Create JIRA release from git tag
+        uses: ./
+        with:
+          jira_host: ''
+          jira_username: ''
+          jira_password: ''
+          jira_project: 'TEST'
