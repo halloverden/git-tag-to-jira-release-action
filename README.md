@@ -10,7 +10,8 @@ Creates a JIRA release based on a git tag.
 
 1. Finds the latest tag defined on HEAD
 2. Finds all JIRA issue keys in the tag message
-3. Creates a release with the tag as name and sets fixVersion on all the issues found to this version
+3. Creates a release with the tag as name and sets fixVersion on all the issues
+   found to this version
 
 # Example action
 
@@ -20,8 +21,8 @@ name: create-jira-release
 # Controls when the workflow will run
 on:
   push:
-    tags: 
-      - "*"
+    tags:
+      - '*'
 
 jobs:
   create:
@@ -36,5 +37,4 @@ jobs:
           jira_username: 'example@example.com'
           jira_password: '${{ secrets.JIRA_PASSWORD }}'
           jira_project: 'APP'
-
 ```

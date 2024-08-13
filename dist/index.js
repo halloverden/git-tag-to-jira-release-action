@@ -31536,8 +31536,8 @@ class WrappedJiraClient {
             if (e instanceof axios_1.AxiosError) {
                 core.error(`Couldn't find project`);
                 const errors = this.extractJiraErrors(e);
-                errors.forEach(e => {
-                    core.error(e);
+                errors.forEach(err => {
+                    core.error(err);
                 });
             }
             else {
@@ -31559,8 +31559,8 @@ class WrappedJiraClient {
             if (e instanceof axios_1.AxiosError) {
                 core.error(`Couldn't create version`);
                 const errors = this.extractJiraErrors(e);
-                errors.forEach(e => {
-                    core.error(e);
+                errors.forEach(err => {
+                    core.error(err);
                 });
             }
             else {
@@ -31581,8 +31581,8 @@ class WrappedJiraClient {
                 if (e instanceof axios_1.AxiosError) {
                     core.warning(`Couldn't update issue '${issue.id}'`);
                     const errors = this.extractJiraErrors(e);
-                    errors.forEach(e => {
-                        core.warning(e);
+                    errors.forEach(err => {
+                        core.warning(err);
                     });
                 }
                 else {
@@ -31610,8 +31610,8 @@ class WrappedJiraClient {
                 if (e instanceof axios_1.AxiosError) {
                     core.warning(`Couldn't find issue '${issueId}'`);
                     const errors = this.extractJiraErrors(e);
-                    errors.forEach(e => {
-                        core.warning(e);
+                    errors.forEach(err => {
+                        core.warning(err);
                     });
                 }
                 else {
@@ -31633,8 +31633,8 @@ class WrappedJiraClient {
         return matches;
     }
     extractJiraErrors(response) {
-        let r = [];
-        let data = response.response?.data;
+        const r = [];
+        const data = response.response?.data;
         if (!this.isJiraErrorResponse(data)) {
             return r;
         }
