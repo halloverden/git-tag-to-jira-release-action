@@ -82,7 +82,7 @@ export class WrappedJiraClient {
 
     let issues: JiraIssue[] = [];
     if (null !== tagMessage) {
-      issues = await this.findIssuesInString(tagMessage);
+      issues = await this.findIssuesInString(tagMessage, projectKey);
     }
 
     core.debug(`Found ${issues.length} issue${issues.length > 1 ? 's' : ''}`);
@@ -112,19 +112,19 @@ export class WrappedJiraClient {
 
   /**
    * @param string
-   * @param project
+   * @param projectKey
    */
   async findIssuesInString(
     string: string,
-    project: string | null = null
+    projectKey: string | null = null
   ): Promise<JiraIssue[]> {
     const issueIds = this.findPossibleIssueIdsInString(string);
 
     const issues: JiraIssue[] = [];
     for (const issueId of issueIds) {
-      if (null !== project && project !== issueId.split('-', 1)[0]) {
+      if (null !== projectKey && projectKey !== issueId.split('-', 1)[0]) {
         core.debug(
-          `Found issue '${issueId}', but project did not match settings (${project})`
+          `Found issue '${issueId}', but project did not match settings (${projectKey})`
         );
         continue;
       }
