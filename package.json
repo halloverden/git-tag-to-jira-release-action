@@ -1,7 +1,7 @@
 {
   "name": "@halloverden/git-tag-to-jira-release-action",
   "description": "Git tag to Jira release action",
-  "version": "v2.1.0",
+  "version": "v2.1.1",
   "author": {
     "name": "Tom Roar Furunes",
     "email": "tom.roar@halloverden.no"
