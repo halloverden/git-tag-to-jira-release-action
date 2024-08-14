@@ -31449,8 +31449,6 @@ async function run() {
             return;
         }
         core.debug(`Tag: ${tag}`);
-        const tagMessage = await gitUtils.findTagMessage(tag);
-        core.debug(`Tag message: '${tagMessage}'`);
         let jiraApiVersion = 3;
         const c = parseInt(core.getInput('jira_api_version'), 10);
         if (validateJiraApiVersion(c)) {
@@ -31465,12 +31463,7 @@ async function run() {
                 apiVersion: jiraApiVersion
             }
         });
-        let issues = [];
-        if (null !== tagMessage) {
-            issues = await wrappedJiraClient.findIssuesInString(tagMessage);
-        }
-        core.debug(`Found ${issues.length} issue${issues.length ? '' : 's'}`);
-        await wrappedJiraClient.createVersionWithIssues(core.getInput('jira_project'), tag, issues);
+        await wrappedJiraClient.createVersion(core.getInput('jira_project'), tag, tag);
     }
     catch (error) {
         if (error instanceof Error) {
@@ -31519,6 +31512,7 @@ exports.WrappedJiraClient = void 0;
 const ts_jira_client_1 = __nccwpck_require__(2282);
 const core = __importStar(__nccwpck_require__(2186));
 const axios_1 = __nccwpck_require__(8757);
+const gitUtils = __importStar(__nccwpck_require__(7213));
 class WrappedJiraClient {
     options;
     jiraApi;
@@ -31527,7 +31521,7 @@ class WrappedJiraClient {
         this.options = options;
         this.jiraApi = new ts_jira_client_1.JiraApi(options.jira);
     }
-    async createVersionWithIssues(projectKey, name, issues) {
+    async createVersion(projectKey, tag, name) {
         let project = null;
         try {
             project = (await this.jiraApi.getProject(projectKey));
@@ -31569,6 +31563,13 @@ class WrappedJiraClient {
             throw e;
         }
         core.debug(`Created version: ${version.name}`);
+        const tagMessage = await gitUtils.findTagMessage(tag);
+        core.debug(`Tag message: '${tagMessage}'`);
+        let issues = [];
+        if (null !== tagMessage) {
+            issues = await this.findIssuesInString(tagMessage);
+        }
+        core.debug(`Found ${issues.length} issue${issues.length > 1 ? 's' : ''}`);
         for (const issue of issues) {
             try {
                 await this.jiraApi.updateIssue(issue.id, {

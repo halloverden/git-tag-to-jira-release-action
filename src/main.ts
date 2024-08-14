@@ -1,7 +1,6 @@
 import * as core from '@actions/core';
 import * as gitUtils from './git-utils';
 import { WrappedJiraClient } from './wrapped-jira-client';
-import { JiraIssue } from 'ts-jira-client/lib/custom';
 
 /**
  * The main function for the action.
@@ -20,9 +19,6 @@ export async function run(): Promise<void> {
     }
     core.debug(`Tag: ${tag}`);
 
-    const tagMessage = await gitUtils.findTagMessage(tag);
-    core.debug(`Tag message: '${tagMessage}'`);
-
     let jiraApiVersion: 1 | 2 | 3 = 3;
     const c = parseInt(core.getInput('jira_api_version'), 10);
     if (validateJiraApiVersion(c)) {
@@ -39,17 +35,10 @@ export async function run(): Promise<void> {
       }
     });
 
-    let issues: JiraIssue[] = [];
-    if (null !== tagMessage) {
-      issues = await wrappedJiraClient.findIssuesInString(tagMessage);
-    }
-
-    core.debug(`Found ${issues.length} issue${issues.length ? '' : 's'}`);
-
-    await wrappedJiraClient.createVersionWithIssues(
+    await wrappedJiraClient.createVersion(
       core.getInput('jira_project'),
       tag,
-      issues
+      tag
     );
   } catch (error) {
     if (error instanceof Error) {

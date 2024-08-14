@@ -3,6 +3,7 @@ import * as core from '@actions/core';
 import { JiraIssue, JiraProject } from 'ts-jira-client/lib/custom';
 import { components } from 'ts-jira-client/lib/generated/openapi-cloud';
 import { AxiosError } from 'axios';
+import * as gitUtils from './git-utils';
 
 type JiraProjectVersion = components['schemas']['Version'];
 
@@ -23,10 +24,10 @@ export class WrappedJiraClient {
     this.jiraApi = new JiraApi(options.jira);
   }
 
-  async createVersionWithIssues(
+  async createVersion(
     projectKey: string,
-    name: string,
-    issues: JiraIssue[]
+    tag: string,
+    name: string
   ): Promise<void> {
     let project: JiraProject | null = null;
 
@@ -75,6 +76,16 @@ export class WrappedJiraClient {
     }
 
     core.debug(`Created version: ${version.name}`);
+
+    const tagMessage = await gitUtils.findTagMessage(tag);
+    core.debug(`Tag message: '${tagMessage}'`);
+
+    let issues: JiraIssue[] = [];
+    if (null !== tagMessage) {
+      issues = await this.findIssuesInString(tagMessage);
+    }
+
+    core.debug(`Found ${issues.length} issue${issues.length > 1 ? 's' : ''}`);
 
     for (const issue of issues) {
       try {
