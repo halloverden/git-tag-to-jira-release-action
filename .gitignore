@@ -1,3 +1,5 @@
+.github/workflows/test-jira-release.yml
+
 # Dependency directory
 node_modules
 
@@ -96,7 +98,8 @@ Thumbs.db
 
 # Ignore built ts files
 __tests__/runner/*
-lib/**/*
 
-# IDE
+# IDE files
 .idea
+.vscode
+*.code-workspace
